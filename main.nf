@@ -2,31 +2,36 @@ nextflow.enable.dsl=2
 
 workflow {
     // 1. preprocess step channels (run in parallel)
-    samples_ch = Channel.of(params.normal, params.tumor)
+    // samples_ch = Channel.of(params.normal, params.tumor)
 
     // 2. preprocess step
-    PREPROCESS(samples_ch)
+    // PREPROCESS(samples_ch)
 
     // 3. merge step
     // only for normal
-    GENERATE_BAMS_LIST(PREPROCESS.out.collect())
-    MERGE_NORMAL(GENERATE_BAMS_LIST.out)
+    // GENERATE_BAMS_LIST(PREPROCESS.out.collect())
+    // MERGE_NORMAL(GENERATE_BAMS_LIST.out)
+
+    normal_bam_ch  = Channel.fromPath("${params.results}/${params.normal}/${params.normal}.bam").collect()
+    tumor_bam_ch   = Channel.fromPath("${params.results}/${params.tumor}/${params.tumor}.bam").collect()
+    genome_fai_ch  = Channel.fromPath("${params.genome}.fai").collect()
 
     // 4. Exclude / Include step
     // depends on step 3
-    PREPARE_BEDS(MERGE_NORMAL.out)
+    PREPARE_BEDS(normal_bam_ch, genome_fai_ch)
 
     // 5. binaries (Lumpy, GATK, CaVEMan, ASCAT)
     // parallel run
-    RUN_LUMPY_NORMAL()
-    RUN_LUMPY_TUMOR()
-    RUN_STATS_NORMAL()
-    RUN_STATS_TUMOR()
+    RUN_LUMPY_NORMAL(normal_bam_ch, PREPARE_BEDS.out.exclude_bed)
+    RUN_LUMPY_TUMOR(tumor_bam_ch, PREPARE_BEDS.out.exclude_bed)
+
+    RUN_STATS_NORMAL(normal_bam_ch)
+    RUN_STATS_TUMOR(tumor_bam_ch)
+
     
-    // using bed files
-    RUN_GATK(PREPARE_BEDS.out.include_bed)
-    RUN_CAVEMAN()
-    RUN_ASCAT()
+    RUN_GATK(tumor_bam_ch, normal_bam_ch, PREPARE_BEDS.out.include_bed)
+    RUN_CAVEMAN(tumor_bam_ch, normal_bam_ch, PREPARE_BEDS.out.include_bed)
+    RUN_ASCAT(tumor_bam_ch, normal_bam_ch)
 }
 
 /* ==========================================
@@ -73,7 +78,8 @@ process MERGE_NORMAL {
 
 process PREPARE_BEDS {
     input:
-    val normal_merged_signal
+    path normal_bam
+    path genome_fai
 
     output:
     path "exclude_${params.normal}.bed", emit: exclude_bed
@@ -82,65 +88,84 @@ process PREPARE_BEDS {
     script:
     """
     module load SAMtools
-    samtools view -H ${params.results}/${params.normal}/${params.normal}.cram | \\
+    samtools view -H ${normal_bam} | \\
     awk -F'[\\t:]' '\$1=="@SQ" && \$3 !~ /^chr([1-9]|1[0-9]|2[0-2]|X|Y|M)\$/ {print \$3"\\t1\\t"\$5}' > exclude_${params.normal}.bed
 
-    awk '\$1 ~ /^chr([1-9]|1[0-9]|2[0-2]|X|Y|M)\$/ {print \$1"\\t1\\t"\$2}' ${params.genome}.fai > include_${params.normal}.bed
+    awk '\$1 ~ /^chr([1-9]|1[0-9]|2[0-2]|X|Y|M)\$/ {print \$1"\\t1\\t"\$2}' ${genome_fai} > include_${params.normal}.bed
     """
 }
 
 process RUN_LUMPY_NORMAL {
     conda 'lumpy-sv'
 
+    input:
+    path bam
+    path exclude_bed
+
     script:
     """
     module load miniconda
-    bash ${params.scripts}/sv.sh ${params.normal} ${params.results}/${params.normal}/${params.normal}.bam ${params.genome} ${params.annotate}/exclude_${params.normal}.bed
+    bash ${params.scripts}/sv.sh ${params.normal} ${bam} ${params.genome} ${exclude_bed}
     """
 }
 
 process RUN_LUMPY_TUMOR {
     conda 'lumpy-sv'
 
+    input:
+    path bam
+    path exclude_bed
+
     script:
     """
     module load miniconda
-    bash ${params.scripts}/sv.sh ${params.tumor} ${params.results}/${params.tumor}/${params.tumor}.bam ${params.genome} ${params.annotate}/exclude_${params.normal}.bed
+    bash ${params.scripts}/sv.sh ${params.tumor} ${bam} ${params.genome} ${exclude_bed}
     """
 }
 
 process RUN_STATS_NORMAL {
     conda 'lumpy-sv'
 
+    input:
+    path bam
+
     script:
     """
     module load miniconda
     export REF_PATH=${params.genome}
-    bash ${params.scripts}/stats.sh ${params.normal} ${params.results}/${params.normal}/${params.normal}.bam
+    bash ${params.scripts}/stats.sh ${params.normal} ${bam}
     """
 }
 
 process RUN_STATS_TUMOR {
     conda 'lumpy-sv'
 
+    input:
+    path bam
+
     script:
     """
     module load miniconda
     export REF_PATH=${params.genome}
-    bash ${params.scripts}/stats.sh ${params.tumor} ${params.results}/${params.tumor}/${params.tumor}.bam
+    bash ${params.scripts}/stats.sh ${params.tumor} ${bam}
     """
 }
 
 process RUN_GATK {
     input:
+    path tumor_bam
+    path normal_bam
     path include_bed
+
+    output:
+    path ${params.results}/${params.tumor}/gatk-${params.tumor}.vcf
 
     script:
     """
     module load GATK
     gatk Mutect2 -R ${params.genome} \\
-        -I ${params.results}/${params.tumor}/${params.tumor}.bam \\
-        -I ${params.results}/${params.normal}/${params.normal}.bam \\
+        -I ${tumor_bam} \\
+        -I ${normal_bam} \\
         -L ${include_bed} \\
         -tumor ${params.tumor} \\
         -normal ${params.normal} \\
@@ -151,12 +176,17 @@ process RUN_GATK {
 process RUN_CAVEMAN {
     container 'cgpwgs.sif'
 
+    input:
+    path tumor_bam
+    path normal_bam
+    path include_bed
+
     script:
     """
     caveman.pl -o ${params.results}/${params.tumor}/caveman \\
         -r ${params.genome}.fai \\
-        -tb ${params.results}/${params.tumor}/${params.tumor}.bam \\
-        -nb ${params.results}/${params.normal}/${params.normal}.bam \\
+        -tb ${tumor_bam} \\
+        -nb ${normal_bam} \\
         -ig ~/hg38-blacklist.v2.bed -tc ~/empty.txt -td 2 -nc ~/empty.txt -nd 2 \\
         -s Human -sa GRCh38 -b ~/empty.txt \\
         -in ~/Mills_and_1000G_gold_standard.indels.hg38.vcf.gz \\
@@ -167,11 +197,15 @@ process RUN_CAVEMAN {
 process RUN_ASCAT {
     container 'cgpwgs.sif'
 
+    input:
+    path tumor_bam
+    path normal_bam
+
     script:
     """
     ascat.pl -o ${params.results}/${params.tumor}/ascat \\
-        -t ${params.results}/${params.tumor}/${params.tumor}.bam \\
-        -n ${params.results}/${params.normal}/${params.normal}.bam \\
+        -t ${tumor_bam} \\
+        -n ${normal_bam} \\
         -r ${params.genome} -pr WGS -g XY -gc chrY \\
         -sg ~/CNV_SV_ref_GRCh38_hla_decoy_ebv_brass6+/ascat/SnpGcCorrections.tsv -c 8
     """
