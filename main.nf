@@ -158,7 +158,7 @@ process RUN_GATK {
     path include_bed
 
     output:
-    path ${params.results}/${params.tumor}/gatk-${params.tumor}.vcf
+    path "${params.results}/${params.tumor}/gatk-${params.tumor}.vcf"
 
     script:
     """
