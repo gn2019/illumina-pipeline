@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com///nextflow_schema.json",
+  "title": " pipeline parameters",
+  "description": "",
+  "type": "object",
+  "properties": {
+    "scripts": {
+      "type": "string",
+      "default": "/home/projects/aafek/golann/shoshani/ShareScripts/wgs"
+    },
+    "normal": {
+      "type": "string",
+      "default": "HeLa_S3__control_of_DM3_and_DM6"
+    },
+    "tumor": {
+      "type": "string",
+      "default": "HeLa_DM3_10000_nM_Resistance_of_MTX"
+    },
+    "genome": {
+      "type": "string",
+      "default": "/home/projects/aafek/golann/shoshani/GRCh38.p7.genome.fa"
+    },
+    "results": {
+      "type": "string",
+      "default": "/home/projects/aafek/golann/shoshani/ShareScripts/wgs/results"
+    },
+    "annotate": {
+      "type": "string",
+      "default": "/home/projects/aafek/golann/shoshani/ShareScripts/wgs/annotate"
+    }
+  }
+}
