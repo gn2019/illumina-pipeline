@@ -96,8 +96,6 @@ process PREPARE_BEDS {
 }
 
 process RUN_LUMPY_NORMAL {
-    conda 'lumpy-sv'
-
     input:
     path bam
     path exclude_bed
@@ -105,13 +103,11 @@ process RUN_LUMPY_NORMAL {
     script:
     """
     module load miniconda
-    bash ${params.scripts}/sv.sh ${params.normal} ${bam} ${params.genome} ${exclude_bed}
+    conda run -n lumpy-sv bash ${params.scripts}/sv.sh ${params.normal} ${bam} ${params.genome} ${exclude_bed}
     """
 }
 
 process RUN_LUMPY_TUMOR {
-    conda 'lumpy-sv'
-
     input:
     path bam
     path exclude_bed
@@ -119,13 +115,11 @@ process RUN_LUMPY_TUMOR {
     script:
     """
     module load miniconda
-    bash ${params.scripts}/sv.sh ${params.tumor} ${bam} ${params.genome} ${exclude_bed}
+    conda run -n lumpy-sv bash ${params.scripts}/sv.sh ${params.tumor} ${bam} ${params.genome} ${exclude_bed}
     """
 }
 
 process RUN_STATS_NORMAL {
-    conda 'lumpy-sv'
-
     input:
     path bam
 
@@ -133,13 +127,11 @@ process RUN_STATS_NORMAL {
     """
     module load miniconda
     export REF_PATH=${params.genome}
-    bash ${params.scripts}/stats.sh ${params.normal} ${bam}
+    conda run -n lumpy-sv bash ${params.scripts}/stats.sh ${params.normal} ${bam}
     """
 }
 
 process RUN_STATS_TUMOR {
-    conda 'lumpy-sv'
-
     input:
     path bam
 
@@ -147,7 +139,7 @@ process RUN_STATS_TUMOR {
     """
     module load miniconda
     export REF_PATH=${params.genome}
-    bash ${params.scripts}/stats.sh ${params.tumor} ${bam}
+    conda run -n lumpy-sv bash ${params.scripts}/stats.sh ${params.tumor} ${bam}
     """
 }
 
