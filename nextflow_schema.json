@@ -28,6 +28,10 @@
     "annotate": {
       "type": "string",
       "default": "/home/projects/aafek/golann/shoshani/ShareScripts/wgs/annotate"
+    },
+    "cgpwgs_sif": {
+      "type": "string",
+      "default": "/home/projects/aafek/golann/cgpwgs.sif"
     }
   }
 }

@@ -174,7 +174,7 @@ process RUN_GATK {
 }
 
 process RUN_CAVEMAN {
-    container 'cgpwgs.sif'
+    container 'file://${params.cgpwgs_sif}'
 
     input:
     path tumor_bam
@@ -195,7 +195,7 @@ process RUN_CAVEMAN {
 }
 
 process RUN_ASCAT {
-    container 'cgpwgs.sif'
+    container 'file://${params.cgpwgs_sif}'
 
     input:
     path tumor_bam
