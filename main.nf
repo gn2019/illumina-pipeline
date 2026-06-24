@@ -170,14 +170,16 @@ process RUN_GATK {
     path "gatk-${params.tumor}.vcf"
 
     script:
+    def tumor_sm  = params.tumor_sample_id ?: params.tumor
+    def normal_sm = params.normal_sample_id ?: params.normal
     """
     module load GATK
     gatk Mutect2 -R ${params.genome} \\
         -I ${tumor_bam} \\
         -I ${normal_bam} \\
         -L ${include_bed} \\
-        -tumor ${params.tumor} \\
-        -normal ${params.normal} \\
+        -tumor ${tumor_sm} \\
+        -normal ${normal_sm} \\
         -O "gatk-${params.tumor}.vcf"
     """
 }
