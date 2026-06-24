@@ -32,6 +32,10 @@
     "cgpwgs_sif": {
       "type": "string",
       "default": "/home/projects/aafek/golann/cgpwgs.sif"
+    },
+    "lumpy_env": {
+      "type": "string",
+      "default": "/home/projects/aafek/golann/.conda/envs/lumpy-sv"
     }
   }
 }

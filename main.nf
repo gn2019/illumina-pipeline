@@ -96,6 +96,8 @@ process PREPARE_BEDS {
 }
 
 process RUN_LUMPY_NORMAL {
+    conda '${params.lumpy_env}'
+
     input:
     path bam
     path exclude_bed
@@ -103,11 +105,13 @@ process RUN_LUMPY_NORMAL {
     script:
     """
     module load miniconda
-    conda run -n lumpy-sv bash ${params.scripts}/sv.sh ${params.normal} ${bam} ${params.genome} ${exclude_bed}
+    bash ${params.scripts}/sv.sh ${params.normal} ${bam} ${params.genome} ${exclude_bed}
     """
 }
 
 process RUN_LUMPY_TUMOR {
+    conda '${params.lumpy_env}'
+
     input:
     path bam
     path exclude_bed
@@ -115,11 +119,13 @@ process RUN_LUMPY_TUMOR {
     script:
     """
     module load miniconda
-    conda run -n lumpy-sv bash ${params.scripts}/sv.sh ${params.tumor} ${bam} ${params.genome} ${exclude_bed}
+    bash ${params.scripts}/sv.sh ${params.tumor} ${bam} ${params.genome} ${exclude_bed}
     """
 }
 
 process RUN_STATS_NORMAL {
+    conda '${params.lumpy_env}'
+
     input:
     path bam
 
@@ -127,11 +133,13 @@ process RUN_STATS_NORMAL {
     """
     module load miniconda
     export REF_PATH=${params.genome}
-    conda run -n lumpy-sv bash ${params.scripts}/stats.sh ${params.normal} ${bam}
+    bash ${params.scripts}/stats.sh ${params.normal} ${bam}
     """
 }
 
 process RUN_STATS_TUMOR {
+    conda '${params.lumpy_env}'
+
     input:
     path bam
 
@@ -139,7 +147,7 @@ process RUN_STATS_TUMOR {
     """
     module load miniconda
     export REF_PATH=${params.genome}
-    conda run -n lumpy-sv bash ${params.scripts}/stats.sh ${params.tumor} ${bam}
+    bash ${params.scripts}/stats.sh ${params.tumor} ${bam}
     """
 }
 
@@ -168,7 +176,7 @@ process RUN_GATK {
 }
 
 process RUN_CAVEMAN {
-    container 'file://${params.cgpwgs_sif}'
+    container '${params.cgpwgs_sif}'
     publishDir "${params.results}/${params.tumor}", mode: 'copy'
 
     output:
@@ -193,7 +201,7 @@ process RUN_CAVEMAN {
 }
 
 process RUN_ASCAT {
-    container 'file://${params.cgpwgs_sif}'
+    container '${params.cgpwgs_sif}'
     publishDir "${params.results}/${params.tumor}", mode: 'copy'
 
     input:
