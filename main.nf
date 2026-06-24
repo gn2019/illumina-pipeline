@@ -13,25 +13,26 @@ workflow {
     // MERGE_NORMAL(GENERATE_BAMS_LIST.out)
 
     normal_bam_ch  = Channel.fromPath("${params.results}/${params.normal}/${params.normal}.bam").collect()
+    normal_bai_ch  = Channel.fromPath("${params.results}/${params.normal}/${params.normal}.bam.bai").collect()
     tumor_bam_ch   = Channel.fromPath("${params.results}/${params.tumor}/${params.tumor}.bam").collect()
-    genome_fai_ch  = Channel.fromPath("${params.genome}.fai").collect()
+    tumor_bai_ch   = Channel.fromPath("${params.results}/${params.tumor}/${params.tumor}.bam.bai").collect()
 
     // 4. Exclude / Include step
     // depends on step 3
-    PREPARE_BEDS(normal_bam_ch, genome_fai_ch)
+    PREPARE_BEDS(normal_bam_ch, normal_bai_ch)
 
     // 5. binaries (Lumpy, GATK, CaVEMan, ASCAT)
     // parallel run
-    RUN_LUMPY_NORMAL(normal_bam_ch, PREPARE_BEDS.out.exclude_bed)
-    RUN_LUMPY_TUMOR(tumor_bam_ch, PREPARE_BEDS.out.exclude_bed)
+    RUN_LUMPY_NORMAL(normal_bam_ch, normal_bai_ch, PREPARE_BEDS.out.exclude_bed)
+    RUN_LUMPY_TUMOR(tumor_bam_ch, tumor_bai_ch, PREPARE_BEDS.out.exclude_bed)
 
-    RUN_STATS_NORMAL(normal_bam_ch)
-    RUN_STATS_TUMOR(tumor_bam_ch)
+    RUN_STATS_NORMAL(normal_bam_ch, normal_bai_ch)
+    RUN_STATS_TUMOR(tumor_bam_ch, tumor_bai_ch)
 
     
-    RUN_GATK(tumor_bam_ch, normal_bam_ch, PREPARE_BEDS.out.include_bed)
-    RUN_CAVEMAN(tumor_bam_ch, normal_bam_ch, PREPARE_BEDS.out.include_bed)
-    RUN_ASCAT(tumor_bam_ch, normal_bam_ch)
+    RUN_GATK(tumor_bam_ch, tumor_bai_ch, normal_bam_ch, normal_bai_ch, PREPARE_BEDS.out.include_bed)
+    RUN_CAVEMAN(tumor_bam_ch, tumor_bai_ch, normal_bam_ch, normal_bai_ch, PREPARE_BEDS.out.include_bed)
+    RUN_ASCAT(tumor_bam_ch, tumor_bai_ch, normal_bam_ch, normal_bai_ch)
 }
 
 /* ==========================================
@@ -79,7 +80,7 @@ process MERGE_NORMAL {
 process PREPARE_BEDS {
     input:
     path normal_bam
-    path genome_fai
+    path normal_bai
 
     output:
     path "exclude_${params.normal}.bed", emit: exclude_bed
@@ -91,7 +92,7 @@ process PREPARE_BEDS {
     samtools view -H ${normal_bam} | \\
     awk -F'[\\t:]' '\$1=="@SQ" && \$3 !~ /^chr([1-9]|1[0-9]|2[0-2]|X|Y|M)\$/ {print \$3"\\t1\\t"\$5}' > exclude_${params.normal}.bed
 
-    awk '\$1 ~ /^chr([1-9]|1[0-9]|2[0-2]|X|Y|M)\$/ {print \$1"\\t1\\t"\$2}' ${genome_fai} > include_${params.normal}.bed
+    awk '\$1 ~ /^chr([1-9]|1[0-9]|2[0-2]|X|Y|M)\$/ {print \$1"\\t1\\t"\$2}' ${params.genome}.fai > include_${params.normal}.bed
     """
 }
 
@@ -100,6 +101,7 @@ process RUN_LUMPY_NORMAL {
 
     input:
     path bam
+    path bai
     path exclude_bed
 
     script:
@@ -114,6 +116,7 @@ process RUN_LUMPY_TUMOR {
 
     input:
     path bam
+    path bai
     path exclude_bed
 
     script:
@@ -128,6 +131,7 @@ process RUN_STATS_NORMAL {
 
     input:
     path bam
+    path bai
 
     script:
     """
@@ -142,6 +146,7 @@ process RUN_STATS_TUMOR {
 
     input:
     path bam
+    path bai
 
     script:
     """
@@ -156,7 +161,9 @@ process RUN_GATK {
 
     input:
     path tumor_bam
+    path tumor_bai
     path normal_bam
+    path normal_bai
     path include_bed
 
     output:
@@ -184,7 +191,9 @@ process RUN_CAVEMAN {
 
     input:
     path tumor_bam
+    path tumor_bai
     path normal_bam
+    path normal_bai
     path include_bed
 
     script:
@@ -206,7 +215,9 @@ process RUN_ASCAT {
 
     input:
     path tumor_bam
+    path tumor_bai
     path normal_bam
+    path normal_bai
 
     output:
     path "ascat"
