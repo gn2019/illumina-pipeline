@@ -96,7 +96,7 @@ process PREPARE_BEDS {
 }
 
 process RUN_LUMPY_NORMAL {
-    conda '${params.lumpy_env}'
+    conda "${params.lumpy_env}"
 
     input:
     path bam
@@ -110,7 +110,7 @@ process RUN_LUMPY_NORMAL {
 }
 
 process RUN_LUMPY_TUMOR {
-    conda '${params.lumpy_env}'
+    conda "${params.lumpy_env}"
 
     input:
     path bam
@@ -124,7 +124,7 @@ process RUN_LUMPY_TUMOR {
 }
 
 process RUN_STATS_NORMAL {
-    conda '${params.lumpy_env}'
+    conda "${params.lumpy_env}"
 
     input:
     path bam
@@ -138,7 +138,7 @@ process RUN_STATS_NORMAL {
 }
 
 process RUN_STATS_TUMOR {
-    conda '${params.lumpy_env}'
+    conda "${params.lumpy_env}"
 
     input:
     path bam
