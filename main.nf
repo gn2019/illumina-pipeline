@@ -152,13 +152,15 @@ process RUN_STATS_TUMOR {
 }
 
 process RUN_GATK {
+    publishDir "${params.results}/${params.tumor}", mode: 'copy'
+
     input:
     path tumor_bam
     path normal_bam
     path include_bed
 
     output:
-    path "${params.results}/${params.tumor}/gatk-${params.tumor}.vcf"
+    path "gatk-${params.tumor}.vcf"
 
     script:
     """
@@ -169,12 +171,16 @@ process RUN_GATK {
         -L ${include_bed} \\
         -tumor ${params.tumor} \\
         -normal ${params.normal} \\
-        -O ${params.results}/${params.tumor}/gatk-${params.tumor}.vcf
+        -O "gatk-${params.tumor}.vcf"
     """
 }
 
 process RUN_CAVEMAN {
     container 'file://${params.cgpwgs_sif}'
+    publishDir "${params.results}/${params.tumor}", mode: 'copy'
+
+    output:
+    path "caveman"
 
     input:
     path tumor_bam
@@ -183,7 +189,7 @@ process RUN_CAVEMAN {
 
     script:
     """
-    caveman.pl -o ${params.results}/${params.tumor}/caveman \\
+    caveman.pl -o caveman \\
         -r ${params.genome}.fai \\
         -tb ${tumor_bam} \\
         -nb ${normal_bam} \\
@@ -196,14 +202,18 @@ process RUN_CAVEMAN {
 
 process RUN_ASCAT {
     container 'file://${params.cgpwgs_sif}'
+    publishDir "${params.results}/${params.tumor}", mode: 'copy'
 
     input:
     path tumor_bam
     path normal_bam
 
+    output:
+    path "ascat"
+
     script:
     """
-    ascat.pl -o ${params.results}/${params.tumor}/ascat \\
+    ascat.pl -o ascat \\
         -t ${tumor_bam} \\
         -n ${normal_bam} \\
         -r ${params.genome} -pr WGS -g XY -gc chrY \\
