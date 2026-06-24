@@ -176,7 +176,7 @@ process RUN_GATK {
 }
 
 process RUN_CAVEMAN {
-    container 'file://${params.cgpwgs_sif}'
+    container "${params.cgpwgs_sif}"
     publishDir "${params.results}/${params.tumor}", mode: 'copy'
 
     output:
@@ -201,7 +201,7 @@ process RUN_CAVEMAN {
 }
 
 process RUN_ASCAT {
-    container 'file://${params.cgpwgs_sif}'
+    container "${params.cgpwgs_sif}"
     publishDir "${params.results}/${params.tumor}", mode: 'copy'
 
     input:
