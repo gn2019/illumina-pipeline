@@ -185,6 +185,7 @@ process RUN_GATK {
         -L ${include_bed} \\
         -tumor ${tumor_sm} \\
         -normal ${normal_sm} \\
+        --pair-hmm-implementation LOGLESS_CACHING \\
         -O "gatk-${params.tumor}.vcf"
     """
 }
