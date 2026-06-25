@@ -16,10 +16,11 @@ workflow {
     normal_bai_ch  = Channel.fromPath("${params.results}/${params.normal}/${params.normal}.bam.bai").collect()
     tumor_bam_ch   = Channel.fromPath("${params.results}/${params.tumor}/${params.tumor}.bam").collect()
     tumor_bai_ch   = Channel.fromPath("${params.results}/${params.tumor}/${params.tumor}.bam.bai").collect()
+    genome_fai_ch  = Channel.fromPath("${params.genome}.fai").collect()
 
     // 4. Exclude / Include step
     // depends on step 3
-    PREPARE_BEDS(normal_bam_ch, normal_bai_ch)
+    PREPARE_BEDS(normal_bam_ch, normal_bai_ch, genome_fai_ch)
 
     // 5. binaries (Lumpy, GATK, CaVEMan, ASCAT)
     // parallel run
@@ -31,7 +32,7 @@ workflow {
 
     
     RUN_GATK(tumor_bam_ch, tumor_bai_ch, normal_bam_ch, normal_bai_ch, PREPARE_BEDS.out.include_bed)
-    RUN_CAVEMAN(tumor_bam_ch, tumor_bai_ch, normal_bam_ch, normal_bai_ch, PREPARE_BEDS.out.include_bed)
+    RUN_CAVEMAN(tumor_bam_ch, tumor_bai_ch, normal_bam_ch, normal_bai_ch, PREPARE_BEDS.out.include_bed, PREPARE_BEDS.out.filtered_fai)
     RUN_ASCAT(tumor_bam_ch, tumor_bai_ch, normal_bam_ch, normal_bai_ch)
 }
 
@@ -81,10 +82,12 @@ process PREPARE_BEDS {
     input:
     path normal_bam
     path normal_bai
+    path genome_fai
 
     output:
     path "exclude_${params.normal}.bed", emit: exclude_bed
     path "include_${params.normal}.bed", emit: include_bed
+    path "filtered_genome.fai", emit: filtered_fai
 
     script:
     """
@@ -93,6 +96,8 @@ process PREPARE_BEDS {
     awk -F'[\\t:]' '\$1=="@SQ" && \$3 !~ /^chr([1-9]|1[0-9]|2[0-2]|X|Y|M)\$/ {print \$3"\\t1\\t"\$5}' > exclude_${params.normal}.bed
 
     awk '\$1 ~ /^chr([1-9]|1[0-9]|2[0-2]|X|Y|M)\$/ {print \$1"\\t1\\t"\$2}' ${params.genome}.fai > include_${params.normal}.bed
+
+    awk '\$1 ~ /^chr([1-9]|1[0-9]|2[0-2]|X|Y|M)\$/' ${genome_fai} > filtered_genome.fai
     """
 }
 
@@ -197,11 +202,12 @@ process RUN_CAVEMAN {
     path normal_bam
     path normal_bai
     path include_bed
+    path filtered_fai
 
     script:
     """
     caveman.pl -o caveman \\
-        -r ${params.genome}.fai \\
+        -r ${filtered_fai} \\
         -tb ${tumor_bam} \\
         -nb ${normal_bam} \\
         -ig ~/hg38-blacklist.v2.bed -tc ~/empty.txt -td 2 -nc ~/empty.txt -nd 2 \\
