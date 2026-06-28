@@ -16,6 +16,7 @@ workflow {
     normal_bai_ch  = Channel.fromPath("${params.results}/${params.normal}/${params.normal}.bam.bai").collect()
     tumor_bam_ch   = Channel.fromPath("${params.results}/${params.tumor}/${params.tumor}.bam").collect()
     tumor_bai_ch   = Channel.fromPath("${params.results}/${params.tumor}/${params.tumor}.bam.bai").collect()
+    genome_fa_ch  = Channel.fromPath("${params.genome}").collect()
     genome_fai_ch  = Channel.fromPath("${params.genome}.fai").collect()
 
     // 4. Exclude / Include step
@@ -32,7 +33,7 @@ workflow {
 
     
     RUN_GATK(tumor_bam_ch, tumor_bai_ch, normal_bam_ch, normal_bai_ch, PREPARE_BEDS.out.include_bed)
-    RUN_CAVEMAN(tumor_bam_ch, tumor_bai_ch, normal_bam_ch, normal_bai_ch, PREPARE_BEDS.out.include_bed, PREPARE_BEDS.out.filtered_fai)
+    RUN_CAVEMAN(tumor_bam_ch, tumor_bai_ch, normal_bam_ch, normal_bai_ch, PREPARE_BEDS.out.include_bed, genome_fa_ch, PREPARE_BEDS.out.filtered_fai)
     RUN_ASCAT(tumor_bam_ch, tumor_bai_ch, normal_bam_ch, normal_bai_ch)
 }
 
@@ -203,12 +204,15 @@ process RUN_CAVEMAN {
     path normal_bam
     path normal_bai
     path include_bed
+    path genome_fasta
     path filtered_fai
 
     script:
     """
+    ln -s ${genome_fasta} local_genome.fa
+    ln -s ${filtered_fai} local_genome.fa.fai
     caveman.pl -o caveman \\
-        -r ${filtered_fai} \\
+        -r local_genome.fa.fai \\
         -tb ${tumor_bam} \\
         -nb ${normal_bam} \\
         -ig ~/hg38-blacklist.v2.bed -tc ~/empty.txt -td 2 -nc ~/empty.txt -nd 2 \\
