@@ -29,6 +29,14 @@
       "type": "string",
       "default": "/home/projects/aafek/golann/shoshani/ShareScripts/wgs/annotate"
     },
+    "species": {
+      "type": "string",
+      "default": "human"
+    },
+    "assembly": {
+      "type": "string",
+      "default": "GRCh38"
+    },
     "cgpwgs_sif": {
       "type": "string",
       "default": "/home/projects/aafek/golann/cgpwgs.sif"

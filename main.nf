@@ -241,6 +241,8 @@ process RUN_ASCAT {
         -t ${tumor_bam} \\
         -n ${normal_bam} \\
         -r ${params.genome} -pr WGS -g XY -gc chrY \\
+        -rs ${params.species} \\
+        -ra ${params.assembly} \\
         -sg ~/CNV_SV_ref_GRCh38_hla_decoy_ebv_brass6+/ascat/SnpGcCorrections.tsv -c 8
     """
 }
