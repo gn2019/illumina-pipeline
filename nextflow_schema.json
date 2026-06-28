@@ -44,6 +44,10 @@
     "lumpy_env": {
       "type": "string",
       "default": "/home/projects/aafek/golann/.conda/envs/lumpy-sv"
+    },
+    "ampsuite_env": {
+      "type": "string",
+      "default": "/home/projects/aafek/golann/.conda/envs/ampsuite"
     }
   }
 }

@@ -35,6 +35,7 @@ workflow {
     RUN_GATK(tumor_bam_ch, tumor_bai_ch, normal_bam_ch, normal_bai_ch, PREPARE_BEDS.out.include_bed)
     RUN_CAVEMAN(tumor_bam_ch, tumor_bai_ch, normal_bam_ch, normal_bai_ch, PREPARE_BEDS.out.include_bed, genome_fa_ch, PREPARE_BEDS.out.filtered_fai)
     RUN_ASCAT(tumor_bam_ch, tumor_bai_ch, normal_bam_ch, normal_bai_ch)
+    RUN_AMPLICONARCHITECT(tumor_bam_ch, tumor_bai_ch)
 }
 
 /* ==========================================
@@ -244,5 +245,23 @@ process RUN_ASCAT {
         -rs ${params.species} \\
         -ra ${params.assembly} \\
         -sg ~/CNV_SV_ref_GRCh38_hla_decoy_ebv_brass6+/ascat/SnpGcCorrections.tsv -c 8
+    """
+}
+
+process RUN_AMPLICONARCHITECT {
+    conda "${params.ampsuite_env}"
+    publishDir "${params.results}/${params.tumor}", mode: 'copy'
+
+    input:
+    path bam
+    path bai
+
+    output:
+    path "AmpliconSuite"
+
+    script:
+    """
+    module load miniconda
+    AmpliconSuite-pipeline.py -s ${params.tumor} -t 16 --bam ${bam} --run_AA --run_AC
     """
 }
