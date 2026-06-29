@@ -249,7 +249,6 @@ process RUN_ASCAT {
 }
 
 process RUN_AMPLICONARCHITECT {
-    validExitStatus 0
     conda "${params.ampsuite_env}"
     publishDir "${params.results}/${params.tumor}", mode: 'copy'
 
