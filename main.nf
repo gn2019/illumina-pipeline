@@ -52,10 +52,10 @@ workflow {
             }
 
         // B. Run generic PREPROCESS
-        ch_preprocessed = PREPROCESS(ch_fastqs)
+        ch_preprocess_outputs = PREPROCESS(ch_fastqs)
 
         // C. Group preprocessed BAMs by type (Tumor together, Normal together)
-        ch_grouped_bams = ch_preprocessed.groupTuple(by: 0)
+        ch_grouped_bams = ch_preprocess_outputs.out.final_bam.groupTuple(by: 0)
 
         // D. Generate lists of BAMs
         ch_bams_lists = GENERATE_BAMS_LIST(ch_grouped_bams)
@@ -118,7 +118,13 @@ process PREPROCESS {
     tuple val(meta), path(reads)
 
     output:
-    tuple val(meta), path("*.dedup.bam")
+    // 1. The clean output needed for downstream tasks
+    tuple val(meta), path("${meta.id}/*.dedup.bam"), emit: final_bam
+
+    // 2. Catch-all for intermediate files (logs, sam, unsorted bams, etc.)
+    // Using "*" captures every non-hidden file created in the work directory
+    path("*"), emit: all_intermediates
+
 
     script:
     // Modified to pass the fastq files dynamically to your shell script
@@ -195,6 +201,9 @@ process RUN_LUMPY {
     tuple val(meta), path(bam), path(bai)
     path exclude_bed
 
+    output:
+    path "lumpy"
+
     script:
     """
     module load miniconda
@@ -210,6 +219,9 @@ process RUN_STATS {
     input:
     tuple val(meta), path(bam), path(bai)
 
+    output:
+    path "stats"
+
     script:
     """
     module load miniconda
@@ -220,7 +232,7 @@ process RUN_STATS {
 
 process RUN_GATK {
     tag "${tumor_meta.id}_vs_${normal_meta.id}"
-    publishDir "${params.results}/${tumor_meta.id}/gatk", mode: 'copy'
+    publishDir "${params.results}/${tumor_meta.id}", mode: 'copy'
 
     input:
     tuple val(tumor_meta), path(tumor_bam), path(tumor_bai)
@@ -228,11 +240,12 @@ process RUN_GATK {
     path include_bed
 
     output:
-    path "gatk-${tumor_meta.id}.vcf"
+    path "gatk"
 
     script:
     """
     module load GATK
+    mkdir -p gatk
     gatk Mutect2 -R ${params.genome} \\
         -I ${tumor_bam} \\
         -I ${normal_bam} \\
@@ -240,14 +253,14 @@ process RUN_GATK {
         -tumor ${tumor_meta.id} \\
         -normal ${normal_meta.id} \\
         --pair-hmm-implementation LOGLESS_CACHING \\
-        -O "gatk-${tumor_meta.id}.vcf" 2>&1
+        -O "gatk/${tumor_meta.id}.vcf" 2>&1
     """
 }
 
 process RUN_CAVEMAN {
     tag "${tumor_meta.id}_vs_${normal_meta.id}"
     container "${params.cgpwgs_sif}"
-    publishDir "${params.results}/${tumor_meta.id}/caveman", mode: 'copy'
+    publishDir "${params.results}/${tumor_meta.id}", mode: 'copy'
 
     input:
     tuple val(tumor_meta), path(tumor_bam), path(tumor_bai)
@@ -257,15 +270,15 @@ process RUN_CAVEMAN {
     path filtered_fai
 
     output:
-    path "caveman_results"
+    path "caveman"
 
     script:
     """
     ln -s ${genome_fasta} local_genome.fa
     ln -s ${filtered_fai} local_genome.fa.fai
 
-    mkdir -p caveman_results
-    caveman.pl -o caveman_results \\
+    mkdir -p caveman
+    caveman.pl -o caveman \\
         -r local_genome.fa.fai \\
         -tb ${tumor_bam} \\
         -nb ${normal_bam} \\
@@ -279,19 +292,19 @@ process RUN_CAVEMAN {
 process RUN_ASCAT {
     tag "${tumor_meta.id}_vs_${normal_meta.id}"
     container "${params.cgpwgs_sif}"
-    publishDir "${params.results}/${tumor_meta.id}/ascat", mode: 'copy'
+    publishDir "${params.results}/${tumor_meta.id}", mode: 'copy'
 
     input:
     tuple val(tumor_meta), path(tumor_bam), path(tumor_bai)
     tuple val(normal_meta), path(normal_bam), path(normal_bai)
 
     output:
-    path "ascat_results"
+    path "ascat"
 
     script:
     """
-    mkdir -p ascat_results
-    ascat.pl -o ascat_results \\
+    mkdir -p ascat
+    ascat.pl -o ascat \\
         -t ${tumor_bam} \\
         -n ${normal_bam} \\
         -r ${params.genome} -pr WGS -g XY -gc chrY \\
