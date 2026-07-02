@@ -28,7 +28,13 @@ workflow {
         log.info "========================================================"
 
         // Feed the existing files directly into the channels
-        ch_tumor_sample  = Channel.of([ meta_tumor, tumor_final_bam, tumor_final_bai ])
+        ch_tumor_samples = Channel
+            .fromList( params.tumors.tokenize(',') )
+            .map { tumor_id ->
+                def bam = file("${params.results}/${tumor_id}/${tumor_id}.bam")
+                def bai = file("${params.results}/${tumor_id}/${tumor_id}.bam.bai")
+                return [ [id: tumor_id, type: 'tumor'], bam, bai ]
+            }
         ch_normal_sample = Channel.of([ meta_normal, normal_final_bam, normal_final_bai ])
 
     } else {
@@ -75,30 +81,29 @@ workflow {
     )
 
     // Mix tumor and normal to run them in parallel through single-sample tools
-    ch_all_samples = ch_tumor_sample.mix(ch_normal_sample)
+    ch_all_samples = ch_tumor_samples.mix(ch_normal_sample)
 
     RUN_LUMPY(ch_all_samples, PREPARE_BEDS.out.exclude_bed.collect())
     RUN_STATS(ch_all_samples)
     RUN_AMPLICONARCHITECT(ch_tumor_sample)
 
+    ch_paired_for_somatic = ch_tumor_samples.combine(ch_normal_sample)
+
     // Paired Somatic Analyses
     RUN_GATK(
-        ch_tumor_sample,
-        ch_normal_sample,
+        ch_paired_for_somatic,
         PREPARE_BEDS.out.include_bed.collect()
     )
 
     RUN_CAVEMAN(
-        ch_tumor_sample,
-        ch_normal_sample,
+        ch_paired_for_somatic,
         PREPARE_BEDS.out.include_bed.collect(),
         ch_genome_fa,
         PREPARE_BEDS.out.filtered_fai.collect()
     )
 
     RUN_ASCAT(
-        ch_tumor_sample,
-        ch_normal_sample
+        ch_paired_for_somatic
     )
 }
 
