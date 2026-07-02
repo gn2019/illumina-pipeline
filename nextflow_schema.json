@@ -5,33 +5,41 @@
   "description": "",
   "type": "object",
   "properties": {
-    "scripts": {
+    "tumors": {
       "type": "string",
-      "default": "/home/projects/aafek/golann/shoshani/ShareScripts/wgs"
+      "default": "PD29429h_DM3_40,PD29429i_DM3_640"
     },
     "normal": {
       "type": "string",
-      "default": "HeLa_S3__control_of_DM3_and_DM6"
+      "default": "HELA"
     },
-    "tumor": {
+    "base": {
       "type": "string",
-      "default": "HeLa_DM3_10000_nM_Resistance_of_MTX"
-    },
-    "genome": {
-      "type": "string",
-      "default": "/home/projects/aafek/golann/shoshani/GRCh38.p7.genome.fa"
+      "default": "/home/projects/aafek/golann/shoshani"
     },
     "results": {
       "type": "string",
       "default": "/home/projects/aafek/golann/shoshani/ShareScripts/wgs/results"
     },
+    "scripts": {
+      "type": "string",
+      "default": "/home/projects/aafek/golann/shoshani/ShareScripts/wgs"
+    },
     "annotate": {
       "type": "string",
       "default": "/home/projects/aafek/golann/shoshani/ShareScripts/wgs/annotate"
     },
+    "fastq_dir": {
+      "type": "string",
+      "default": "/home/projects/aafek/golann/shoshani/ShareScripts/wgs/data/fastq"
+    },
+    "genome": {
+      "type": "string",
+      "default": "/home/projects/aafek/golann/shoshani/GRCh38.p7.genome.fa"
+    },
     "species": {
       "type": "string",
-      "default": "human"
+      "default": "Human"
     },
     "assembly": {
       "type": "string",
@@ -39,15 +47,33 @@
     },
     "cgpwgs_sif": {
       "type": "string",
-      "default": "/home/projects/aafek/golann/cgpwgs.sif"
+      "default": "/home/projects/aafek/golann/cgpwgs.sif",
+      "hidden": true
     },
     "lumpy_env": {
       "type": "string",
-      "default": "/home/projects/aafek/golann/.conda/envs/lumpy-sv"
+      "default": "/home/projects/aafek/golann/.conda/envs/lumpy-sv",
+      "hidden": true
     },
     "ampsuite_env": {
       "type": "string",
-      "default": "/home/projects/aafek/golann/.conda/envs/ampsuite"
+      "default": "/home/projects/aafek/golann/.conda/envs/ampsuite",
+      "hidden": true
+    },
+    "ascat_gc_correction": {
+      "type": "string",
+      "default": "~/CNV_SV_ref_GRCh38_hla_decoy_ebv_brass6+/ascat/SnpGcCorrections.tsv",
+      "hidden": true
+    },
+    "caveman_blacklist": {
+      "type": "string",
+      "default": "~/hg38-blacklist.v2.bed",
+      "hidden": true
+    },
+    "caveman_indels": {
+      "type": "string",
+      "default": "~/Mills_and_1000G_gold_standard.indels.hg38.vcf.gz",
+      "hidden": true
     }
   }
 }
