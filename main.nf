@@ -43,7 +43,7 @@ workflow {
 
         // Run Preprocess -> List Generation -> Merge for missing samples
         ch_preprocess_outputs = PREPROCESS(ch_fastqs)
-        ch_grouped_bams = ch_preprocess_outputs.out.final_bam.groupTuple(by: 0)
+        ch_grouped_bams = ch_preprocess_outputs.final_bam.groupTuple(by: 0)
         ch_bams_lists   = GENERATE_BAMS_LIST(ch_grouped_bams)
         ch_merged_bams  = MERGE_BAMS(ch_bams_lists)
 
