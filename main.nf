@@ -8,103 +8,80 @@ nextflow.enable.dsl=2
 // ==========================================
 workflow {
 
-    // 1. Define Meta Maps (Identities for our samples)
-    def meta_tumor  = [id: params.tumor,  type: 'tumor']
-    def meta_normal = [id: params.normal, type: 'normal']
+    // 1. Parse lists of samples dynamically
+    def tumor_ids = params.tumors.tokenize(',')
+    def normal_id = params.normal
 
-    // 2. Expected final output BAM files after MERGE
-    def tumor_final_bam  = file("${params.results}/${params.tumor}/${params.tumor}.bam")
-    def tumor_final_bai  = file("${params.results}/${params.tumor}/${params.tumor}.bam.bai")
-    def normal_final_bam = file("${params.results}/${params.normal}/${params.normal}.bam")
-    def normal_final_bai = file("${params.results}/${params.normal}/${params.normal}.bam.bai")
+    // 2. Build explicit definitions for all target samples
+    def tumor_definitions = tumor_ids.collect { id ->
+        [ [id: id, type: 'tumor'], file("${params.results}/${id}/${id}.bam"), file("${params.results}/${id}/${id}.bam.bai") ]
+    }
+    def normal_definition = [ [id: normal_id, type: 'normal'], file("${params.results}/${normal_id}/${normal_id}.bam"), file("${params.results}/${normal_id}/${normal_id}.bam.bai") ]
 
-    def ch_tumor_sample
-    def ch_normal_sample
+    def all_sample_definitions = tumor_definitions + [normal_definition]
 
-    // 3. Smart Skipping Logic: Check if final BAMs already exist on disk
-    if (tumor_final_bam.exists() && normal_final_bam.exists()) {
-        log.info "========================================================"
-        log.info "Merged BAMs found on disk. Skipping PREPROCESS and MERGE."
-        log.info "========================================================"
+    // 3. Separate samples by checking physical file existence on disk
+    def existing_samples = all_sample_definitions.findAll { meta, bam, bai -> bam.exists() && bai.exists() }
+    def missing_samples  = all_sample_definitions.findAll { meta, bam, bai -> !bam.exists() || !bai.exists() }
 
-        // Feed the existing files directly into the channels
-        ch_tumor_samples = Channel
-            .fromList( params.tumors.tokenize(',') )
-            .map { tumor_id ->
-                def bam = file("${params.results}/${tumor_id}/${tumor_id}.bam")
-                def bai = file("${params.results}/${tumor_id}/${tumor_id}.bam.bai")
-                return [ [id: tumor_id, type: 'tumor'], bam, bai ]
-            }
-        ch_normal_sample = Channel.of([ meta_normal, normal_final_bam, normal_final_bai ])
+    // 4. Initialize channels based on disk status
+    ch_ready_samples = Channel.fromList(existing_samples)
+    def ch_all_processed_samples
 
-    } else {
-        log.info "========================================================"
-        log.info "Merged BAMs missing. Starting PREPROCESS from FASTQs..."
-        log.info "========================================================"
+    if (missing_samples.size() > 0) {
+        log.info "Found ${missing_samples.size()} samples missing their BAM files. Triggering PREPROCESS..."
 
-        // A. Read FASTQs from params.fastq_dir dynamically based on sample names
-        // Expecting files like: {sample_id}_R1.fastq.gz
-        ch_fastqs = Channel.fromFilePairs("${params.fastq_dir}/*{${params.tumor},${params.normal}}*R{1,2}*.{fastq,fastq.gz}", checkIfExists: true)
+        def missing_ids = missing_samples.collect { meta, bam, bai -> meta.id }
+
+        // Fetch FASTQs only for the samples that actually need them
+        ch_fastqs = Channel.fromFilePairs("${params.fastq_dir}/*{${missing_ids.join(',')}}*R{1,2}*.{fastq,fastq.gz}", checkIfExists: true)
             .map { name, reads ->
-                // Determine if this pair belongs to tumor or normal based on the filename
-                def meta = name.contains(params.tumor) ? meta_tumor : meta_normal
+                def sample_id = missing_ids.find { name.contains(it) }
+                def meta = missing_samples.find { m, b, bi -> m.id == sample_id }[0]
                 return [ meta, reads ]
             }
 
-        // B. Run generic PREPROCESS
+        // Run Preprocess -> List Generation -> Merge for missing samples
         ch_preprocess_outputs = PREPROCESS(ch_fastqs)
-
-        // C. Group preprocessed BAMs by type (Tumor together, Normal together)
         ch_grouped_bams = ch_preprocess_outputs.out.final_bam.groupTuple(by: 0)
+        ch_bams_lists   = GENERATE_BAMS_LIST(ch_grouped_bams)
+        ch_merged_bams  = MERGE_BAMS(ch_bams_lists)
 
-        // D. Generate lists of BAMs
-        ch_bams_lists = GENERATE_BAMS_LIST(ch_grouped_bams)
-
-        // E. Run generic MERGE
-        ch_merged_bams = MERGE_BAMS(ch_bams_lists)
-
-        // F. Split the resulting merged BAMs into specific Tumor and Normal channels
-        // to feed the rest of the pipeline
-        ch_tumor_sample = ch_merged_bams.filter { meta, bam, bai -> meta.type == 'tumor' }
-        ch_normal_sample = ch_merged_bams.filter { meta, bam, bai -> meta.type == 'normal' }
+        // Mix pre-existing static samples with newly generated ones
+        ch_all_processed_samples = ch_ready_samples.mix(ch_merged_bams)
+    } else {
+        log.info "All BAM files found on disk. Skipping all preprocessing modules entirely."
+        ch_all_processed_samples = ch_ready_samples
     }
 
-    // 4. References Channels
+    // 5. References Channels
     ch_genome_fa  = Channel.fromPath(params.genome).collect()
     ch_genome_fai = Channel.fromPath("${params.genome}.fai").collect()
 
-    // 5. Downstream Analysis
+    // 6. Split master channel back to specific sub-channels for analytical steps
+    ch_tumor_samples = ch_all_processed_samples.filter { meta, bam, bai -> meta.type == 'tumor' }
+    ch_normal_sample = ch_all_processed_samples.filter { meta, bam, bai -> meta.type == 'normal' }
+
+    // 7. Dynamic Reference BED preparation (Triggers as soon as Normal BAM is resolved)
     PREPARE_BEDS(
         ch_normal_sample.map { meta, bam, bai -> bam },
         ch_normal_sample.map { meta, bam, bai -> bai },
         ch_genome_fai
     )
 
-    // Mix tumor and normal to run them in parallel through single-sample tools
+    // 8. Single-Sample Analyses (Parallel execution for all inputs via mix)
     ch_all_samples = ch_tumor_samples.mix(ch_normal_sample)
 
     RUN_LUMPY(ch_all_samples, PREPARE_BEDS.out.exclude_bed.collect())
     RUN_STATS(ch_all_samples)
-    RUN_AMPLICONARCHITECT(ch_tumor_sample)
+    RUN_AMPLICONARCHITECT(ch_tumor_samples)
 
-    ch_paired_for_somatic = ch_tumor_samples.combine(ch_normal_sample)
+    // 9. Somatic Paired Analyses (Every tumor automatically mapped against the normal sample)
+    ch_paired_somatic = ch_tumor_samples.combine(ch_normal_sample)
 
-    // Paired Somatic Analyses
-    RUN_GATK(
-        ch_paired_for_somatic,
-        PREPARE_BEDS.out.include_bed.collect()
-    )
-
-    RUN_CAVEMAN(
-        ch_paired_for_somatic,
-        PREPARE_BEDS.out.include_bed.collect(),
-        ch_genome_fa,
-        PREPARE_BEDS.out.filtered_fai.collect()
-    )
-
-    RUN_ASCAT(
-        ch_paired_for_somatic
-    )
+    RUN_GATK(ch_paired_somatic, PREPARE_BEDS.out.include_bed.collect())
+    RUN_CAVEMAN(ch_paired_somatic, PREPARE_BEDS.out.include_bed.collect(), ch_genome_fa, PREPARE_BEDS.out.filtered_fai.collect())
+    RUN_ASCAT(ch_paired_somatic)
 }
 
 // ==========================================
@@ -113,6 +90,7 @@ workflow {
 
 process PREPROCESS {
     tag "${meta.id}"
+    publishDir "${params.results}/${meta.id}/preprocess", mode: 'copy'
 
     input:
     tuple val(meta), path(reads)
@@ -124,7 +102,6 @@ process PREPROCESS {
     // 2. Catch-all for intermediate files (logs, sam, unsorted bams, etc.)
     // Using "*" captures every non-hidden file created in the work directory
     path("*"), emit: all_intermediates
-
 
     script:
     // Modified to pass the fastq files dynamically to your shell script
@@ -235,8 +212,7 @@ process RUN_GATK {
     publishDir "${params.results}/${tumor_meta.id}", mode: 'copy'
 
     input:
-    tuple val(tumor_meta), path(tumor_bam), path(tumor_bai)
-    tuple val(normal_meta), path(normal_bam), path(normal_bai)
+    tuple val(tumor_meta), path(tumor_bam), path(tumor_bai), val(normal_meta), path(normal_bam), path(normal_bai)
     path include_bed
 
     output:
@@ -263,8 +239,7 @@ process RUN_CAVEMAN {
     publishDir "${params.results}/${tumor_meta.id}", mode: 'copy'
 
     input:
-    tuple val(tumor_meta), path(tumor_bam), path(tumor_bai)
-    tuple val(normal_meta), path(normal_bam), path(normal_bai)
+    tuple val(tumor_meta), path(tumor_bam), path(tumor_bai), val(normal_meta), path(normal_bam), path(normal_bai)
     path include_bed
     path genome_fasta
     path filtered_fai
@@ -295,8 +270,7 @@ process RUN_ASCAT {
     publishDir "${params.results}/${tumor_meta.id}", mode: 'copy'
 
     input:
-    tuple val(tumor_meta), path(tumor_bam), path(tumor_bai)
-    tuple val(normal_meta), path(normal_bam), path(normal_bai)
+    tuple val(tumor_meta), path(tumor_bam), path(tumor_bai), val(normal_meta), path(normal_bam), path(normal_bai)
 
     output:
     path "ascat"
