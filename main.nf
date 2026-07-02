@@ -118,7 +118,7 @@ process PREPROCESS {
     script:
     // Modified to pass the fastq files dynamically to your shell script
     """
-    bash ${params.scripts}/preprocess.sh ${meta.id} noERX ${reads[0]} ${reads[1]} ${params.genome}
+    bash ${params.scripts}/preprocess.sh ${meta.id} noERX ${reads[0]} ${reads[1]} ${params.genome} 2>&1
     """
 }
 
@@ -151,7 +151,7 @@ process MERGE_BAMS {
 
     script:
     """
-    bash ${params.scripts}/merge.sh ${meta.id} ${bams_list}
+    bash ${params.scripts}/merge.sh ${meta.id} ${bams_list} 2>&1
     """
 }
 
@@ -193,7 +193,7 @@ process RUN_LUMPY {
     script:
     """
     module load miniconda
-    bash ${params.scripts}/sv.sh ${meta.id} ${bam} ${params.genome} ${exclude_bed}
+    bash ${params.scripts}/sv.sh ${meta.id} ${bam} ${params.genome} ${exclude_bed} 2>&1
     """
 }
 
@@ -209,7 +209,7 @@ process RUN_STATS {
     """
     module load miniconda
     export REF_PATH=${params.genome}
-    bash ${params.scripts}/stats.sh ${meta.id} ${bam}
+    bash ${params.scripts}/stats.sh ${meta.id} ${bam} 2>&1
     """
 }
 
@@ -235,7 +235,7 @@ process RUN_GATK {
         -tumor ${tumor_meta.id} \\
         -normal ${normal_meta.id} \\
         --pair-hmm-implementation LOGLESS_CACHING \\
-        -O "gatk-${tumor_meta.id}.vcf"
+        -O "gatk-${tumor_meta.id}.vcf" 2>&1
     """
 }
 
@@ -267,7 +267,7 @@ process RUN_CAVEMAN {
         -ig ${params.caveman_blacklist} -tc ~/empty.txt -td 2 -nc ~/empty.txt -nd 2 \\
         -s Human -sa GRCh38 -b ~/empty.txt \\
         -in ${params.caveman_indels} \\
-        -st genome -u ~/empty_dir -t 96 -noflag
+        -st genome -u ~/empty_dir -t 96 -noflag 2>&1
     """
 }
 
@@ -292,7 +292,7 @@ process RUN_ASCAT {
         -r ${params.genome} -pr WGS -g XY -gc chrY \\
         -rs ${params.species} \\
         -ra ${params.assembly} \\
-        -sg ${params.ascat_gc_correction} -c 8
+        -sg ${params.ascat_gc_correction} -c 8 2>&1
     """
 }
 
@@ -310,6 +310,6 @@ process RUN_AMPLICONARCHITECT {
     script:
     """
     module load miniconda
-    AmpliconSuite-pipeline.py -s ${meta.id} -t 16 --bam ${bam} --run_AA --run_AC
+    AmpliconSuite-pipeline.py -s ${meta.id} -t 16 --bam ${bam} --run_AA --run_AC 2>&1
     """
 }
