@@ -76,11 +76,28 @@ workflow {
     RUN_STATS(ch_all_samples)
     RUN_AMPLICONARCHITECT(ch_tumor_samples)
 
-    // 9. Somatic Paired Analyses (Every tumor automatically mapped against the normal sample)
+    // 9. Somatic Paired Analyses
     ch_paired_somatic = ch_tumor_samples.combine(ch_normal_sample)
 
-    RUN_GATK(ch_paired_somatic, PREPARE_BEDS.out.include_bed.collect())
-    RUN_CAVEMAN(ch_paired_somatic, PREPARE_BEDS.out.include_bed.collect(), ch_genome_fa, PREPARE_BEDS.out.filtered_fai.collect())
+    // --- SCATTER PREPARATION ---
+    SPLIT_BED_INTO_CHUNKS(PREPARE_BEDS.out.include_bed.collect())
+    chunk_beds_ch = SPLIT_BED_INTO_CHUNKS.out.flatten()
+
+    ch_scattered_somatic = ch_paired_somatic.combine(chunk_beds_ch)
+
+    // --- RUN SCATTERED TOOLS ---
+    RUN_GATK(ch_scattered_somatic)
+    RUN_CAVEMAN(ch_scattered_somatic, ch_genome_fa, PREPARE_BEDS.out.filtered_fai.collect())
+
+    // --- GATHER RESULTS ---
+    // merge GATK results
+    gatk_per_sample_ch = RUN_GATK.out.groupTuple(by: 0)
+    MERGE_GATK_VCFS(gatk_per_sample_ch)
+
+    // merge all Caveman result dirs
+    caveman_per_sample_ch = RUN_CAVEMAN.out.groupTuple(by: 0)
+    MERGE_CAVEMAN_RESULTS(caveman_per_sample_ch)
+
     RUN_ASCAT(ch_paired_somatic)
 }
 
@@ -96,15 +113,10 @@ process PREPROCESS {
     tuple val(meta), path(reads)
 
     output:
-    // 1. The clean output needed for downstream tasks
     tuple val(meta), path("${meta.id}/*.dedup.bam"), emit: final_bam
-
-    // 2. Catch-all for intermediate files (logs, sam, unsorted bams, etc.)
-    // Using "*" captures every non-hidden file created in the work directory
     path("*"), emit: all_intermediates
 
     script:
-    // Modified to pass the fastq files dynamically to your shell script
     """
     bash ${params.scripts}/preprocess.sh ${meta.id} noERX ${reads[0]} ${reads[1]} ${params.genome} 2>&1
     """
@@ -117,12 +129,10 @@ process GENERATE_BAMS_LIST {
     tuple val(meta), path(bams)
 
     output:
-    // Passes forward the metadata, the text file with the list, and the actual bams
     tuple val(meta), path("bams_${meta.type}.txt"), path(bams)
 
     script:
     """
-    # Nextflow brings the bams into the working directory, so we just list them
     ls *.bam > bams_${meta.type}.txt
     """
 }
@@ -169,6 +179,27 @@ process PREPARE_BEDS {
     """
 }
 
+// --- NEW SCATTER PROCESS ---
+process SPLIT_BED_INTO_CHUNKS {
+    tag "split_bed"
+
+    input:
+    path main_bed
+
+    output:
+    path "*.bed"
+
+    script:
+    """
+	awk -v chunk=50000000 '{
+        for (i=0; i<\$3; i+=chunk) {
+            end = (i+chunk > \$3) ? \$3 : i+chunk
+            print \$1"\\t"i"\\t"end > \$1"_"i".bed"
+        }
+    }' ${main_bed}
+    """
+}
+
 process RUN_LUMPY {
     tag "${meta.id}_${meta.type}"
     conda "${params.lumpy_env}"
@@ -208,59 +239,94 @@ process RUN_STATS {
 }
 
 process RUN_GATK {
-    tag "${tumor_meta.id}_vs_${normal_meta.id}"
-    publishDir "${params.results}/${tumor_meta.id}", mode: 'copy'
+    tag "${tumor_meta.id}_vs_${normal_meta.id}_${chunk_bed.baseName}"
 
     input:
-    tuple val(tumor_meta), path(tumor_bam), path(tumor_bai), val(normal_meta), path(normal_bam), path(normal_bai)
-    path include_bed
+    tuple val(tumor_meta), path(tumor_bam), path(tumor_bai), val(normal_meta), path(normal_bam), path(normal_bai), path(chunk_bed)
 
     output:
-    path "gatk"
+    tuple val(tumor_meta), path("gatk-${tumor_meta.id}-${chunk_bed.baseName}.vcf")
 
     script:
     """
     module load GATK
-    mkdir -p gatk
     gatk Mutect2 -R ${params.genome} \\
         -I ${tumor_bam} \\
         -I ${normal_bam} \\
-        -L ${include_bed} \\
+        -L ${chunk_bed} \\
         -tumor ${tumor_meta.id} \\
         -normal ${normal_meta.id} \\
+        --native-pair-hmm-threads 8 \\
         --pair-hmm-implementation LOGLESS_CACHING \\
-        -O "gatk/${tumor_meta.id}.vcf" 2>&1
+        -O "gatk-${tumor_meta.id}-${chunk_bed.baseName}.vcf" 2>&1
     """
 }
 
 process RUN_CAVEMAN {
-    tag "${tumor_meta.id}_vs_${normal_meta.id}"
+    tag "${tumor_meta.id}_vs_${normal_meta.id}_${chunk_bed.baseName}"
     container "${params.cgpwgs_sif}"
-    publishDir "${params.results}/${tumor_meta.id}", mode: 'copy'
 
     input:
-    tuple val(tumor_meta), path(tumor_bam), path(tumor_bai), val(normal_meta), path(normal_bam), path(normal_bai)
-    path include_bed
+    tuple val(tumor_meta), path(tumor_bam), path(tumor_bai), val(normal_meta), path(normal_bam), path(normal_bai), path(chunk_bed)
     path genome_fasta
     path filtered_fai
 
     output:
-    path "caveman"
+    tuple val(tumor_meta), path("caveman_${chunk_bed.baseName}")
 
     script:
     """
     ln -s ${genome_fasta} local_genome.fa
     ln -s ${filtered_fai} local_genome.fa.fai
 
-    mkdir -p caveman
-    caveman.pl -o caveman \\
+    mkdir -p caveman_${chunk_bed.baseName}
+    caveman.pl -o caveman_${chunk_bed.baseName} \\
         -r local_genome.fa.fai \\
         -tb ${tumor_bam} \\
         -nb ${normal_bam} \\
         -ig ${params.caveman_blacklist} -tc ~/empty.txt -td 2 -nc ~/empty.txt -nd 2 \\
-        -s Human -sa GRCh38 -b ~/empty.txt \\
+        -s Human -sa GRCh38 -b ${chunk_bed} \\
         -in ${params.caveman_indels} \\
-        -st genome -u ~/empty_dir -t 96 -noflag 2>&1
+        -st genome -u ~/empty_dir -t 8 -noflag 2>&1
+    """
+}
+
+// --- NEW GATHER PROCESSES ---
+process MERGE_GATK_VCFS {
+    tag "${tumor_meta.id}"
+    publishDir "${params.results}/${tumor_meta.id}", mode: 'copy'
+
+    input:
+    tuple val(tumor_meta), path(vcf_list)
+
+    output:
+    path "gatk/${tumor_meta.id}_merged.vcf"
+
+    script:
+    def input_list = vcf_list.collect { "-I ${it}" }.join(' ')
+    """
+    module load GATK
+    mkdir -p gatk
+    gatk MergeVcfs ${input_list} -O "gatk/${tumor_meta.id}_merged.vcf"
+    """
+}
+
+process MERGE_CAVEMAN_RESULTS {
+    tag "${tumor_meta.id}"
+    publishDir "${params.results}/${tumor_meta.id}", mode: 'copy'
+
+    input:
+    tuple val(tumor_meta), path(results_dirs)
+
+    output:
+    path "caveman"
+
+    script:
+    """
+    mkdir -p caveman
+    for dir in ${results_dirs}; do
+        cp -r \$dir/* caveman/ 2>/dev/null || true
+    done
     """
 }
 
