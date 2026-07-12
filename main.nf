@@ -28,6 +28,8 @@ workflow {
     ch_ready_samples = Channel.fromList(existing_samples)
     def ch_all_processed_samples
 
+    DOWNLOAD_REFS()
+
     if (missing_samples.size() > 0) {
         log.info "Found ${missing_samples.size()} samples missing their BAM files. Triggering PREPROCESS..."
 
@@ -119,6 +121,13 @@ process PREPROCESS {
     script:
     """
     bash ${params.scripts}/preprocess.sh ${meta.id} noERX ${reads[0]} ${reads[1]} ${params.genome} 2>&1
+    """
+}
+
+process DOWNLOAD_REFS {
+    script:
+    """
+    bash ${params.scripts}/download_refs.sh hg38
     """
 }
 
@@ -284,7 +293,7 @@ process RUN_CAVEMAN {
         -r local_genome.fa.fai \\
         -tb ${tumor_bam} \\
         -nb ${normal_bam} \\
-        -ig ${params.caveman_blacklist} -tc ~/empty.txt -td 2 -nc ~/empty.txt -nd 2 \\
+        -ig ${params.caveman_blacklist} -tc ~/empty.txt -td 3 -nc ~/empty.txt -nd 3 \\
         -s Human -sa GRCh38 -b ${chunk_bed} \\
         -in ${params.caveman_indels} \\
         -st genome -u ~/empty_dir -t 8 -noflag 2>&1
