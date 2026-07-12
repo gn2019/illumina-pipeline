@@ -126,10 +126,10 @@ process PREPROCESS {
 
 process DOWNLOAD_REFS {
     output:
-    path caveman_blacklist.bed, emit: caveman_blacklist
-    path caveman_indels.vcf.gz, emit: caveman_indels
-    path caveman_indels.vcf.gz.tbi, emit: caveman_indels_tbi
-    path ascat_gc.txt, emit: ascat_gc_correction
+    path "caveman_blacklist.bed", emit: caveman_blacklist
+    path "caveman_indels.vcf.gz", emit: caveman_indels
+    path "caveman_indels.vcf.gz.tbi", emit: caveman_indels_tbi
+    path "ascat_gc.txt", emit: ascat_gc_correction
 
     script:
     """
