@@ -89,7 +89,7 @@ workflow {
 
     // --- RUN SCATTERED TOOLS ---
     RUN_GATK(ch_scattered_somatic)
-    RUN_CAVEMAN(ch_scattered_somatic, ch_genome_fa, PREPARE_BEDS.out.filtered_fai.collect())
+    RUN_CAVEMAN(ch_scattered_somatic, ch_genome_fa, PREPARE_BEDS.out.filtered_fai.collect(), DOWNLOAD_REFS.out.caveman_blacklist.collect(), DOWNLOAD_REFS.out.caveman_indels.collect(), DOWNLOAD_REFS.out.caveman_indels_tbi.collect())
 
     // --- GATHER RESULTS ---
     // merge GATK results
@@ -100,7 +100,7 @@ workflow {
     caveman_per_sample_ch = RUN_CAVEMAN.out.groupTuple(by: 0)
     MERGE_CAVEMAN_RESULTS(caveman_per_sample_ch)
 
-    RUN_ASCAT(ch_paired_somatic)
+    RUN_ASCAT(ch_paired_somatic, DOWNLOAD_REFS.out.ascat_gc_correction.collect())
 }
 
 // ==========================================
@@ -125,9 +125,22 @@ process PREPROCESS {
 }
 
 process DOWNLOAD_REFS {
+    output:
+    path caveman_blacklist.bed, emit: caveman_blacklist
+    path caveman_indels.vcf.gz, emit: caveman_indels
+    path caveman_indels.vcf.gz.tbi, emit: caveman_indels_tbi
+    path ascat_gc.txt, emit: ascat_gc_correction
+
     script:
     """
+    module load BEDTools
+
     bash ${params.scripts}/download_refs.sh hg38
+
+    ln -s ${params.caveman_blacklist} caveman_blacklist.bed
+    ln -s ${params.caveman_indels} caveman_indels.vcf.gz
+    ln -s ${params.caveman_indels}.tbi caveman_indels.vcf.gz.tbi
+    ln -s ${params.ascat_gc_correction} ascat_gc.txt
     """
 }
 
@@ -279,12 +292,19 @@ process RUN_CAVEMAN {
     tuple val(tumor_meta), path(tumor_bam), path(tumor_bai), val(normal_meta), path(normal_bam), path(normal_bai), path(chunk_bed)
     path genome_fasta
     path filtered_fai
+    path caveman_blacklist
+    path caveman_indels
+    path caveman_indels_tbi
+
 
     output:
     tuple val(tumor_meta), path("caveman_${chunk_bed.baseName}")
 
     script:
     """
+    touch empty.txt
+    mkdir -p empty_dir
+
     ln -s ${genome_fasta} local_genome.fa
     ln -s ${filtered_fai} local_genome.fa.fai
 
@@ -293,10 +313,10 @@ process RUN_CAVEMAN {
         -r local_genome.fa.fai \\
         -tb ${tumor_bam} \\
         -nb ${normal_bam} \\
-        -ig ${params.caveman_blacklist} -tc ~/empty.txt -td 3 -nc ~/empty.txt -nd 3 \\
+        -ig ${caveman_blacklist} -tc empty.txt -td 3 -nc empty.txt -nd 3 \\
         -s Human -sa GRCh38 -b ${chunk_bed} \\
-        -in ${params.caveman_indels} \\
-        -st genome -u ~/empty_dir -t 8 -noflag 2>&1
+        -in ${caveman_indels} \\
+        -st genome -u empty_dir -t 8 -noflag 2>&1
     """
 }
 
@@ -332,10 +352,12 @@ process MERGE_CAVEMAN_RESULTS {
 
     script:
     """
+    module load GATK
     mkdir -p caveman
-    for dir in ${results_dirs}; do
-        cp -r \$dir/* caveman/ 2>/dev/null || true
-    done
+
+    find ${results_dirs} -type f \\( -name "*.vcf" -o -name "*.vcf.gz" \\) > vcfs_to_merge.list
+
+    gatk MergeVcfs -I vcfs_to_merge.list -O caveman/${tumor_meta.id}_caveman_merged.vcf
     """
 }
 
@@ -346,6 +368,7 @@ process RUN_ASCAT {
 
     input:
     tuple val(tumor_meta), path(tumor_bam), path(tumor_bai), val(normal_meta), path(normal_bam), path(normal_bai)
+    path ascat_gc_correction
 
     output:
     path "ascat"
@@ -359,7 +382,7 @@ process RUN_ASCAT {
         -r ${params.genome} -pr WGS -g XY -gc chrY \\
         -rs ${params.species} \\
         -ra ${params.assembly} \\
-        -sg ${params.ascat_gc_correction} -c 8 2>&1
+        -sg ${ascat_gc_correction} -c 8 2>&1
     """
 }
 
