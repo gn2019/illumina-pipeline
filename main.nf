@@ -137,10 +137,10 @@ process DOWNLOAD_REFS {
 
     bash ${params.scripts}/download_refs.sh hg38
 
-    ln -s ${params.caveman_blacklist} caveman_blacklist.bed
-    ln -s ${params.caveman_indels} caveman_indels.vcf.gz
-    ln -s ${params.caveman_indels}.tbi caveman_indels.vcf.gz.tbi
-    ln -s ${params.ascat_gc_correction} ascat_gc.txt
+    ln -fs ${params.caveman_blacklist} caveman_blacklist.bed
+    ln -fs ${params.caveman_indels} caveman_indels.vcf.gz
+    ln -fs ${params.caveman_indels}.tbi caveman_indels.vcf.gz.tbi
+    ln -fs ${params.ascat_gc_correction} ascat_gc.txt
     """
 }
 
@@ -305,8 +305,8 @@ process RUN_CAVEMAN {
     touch empty.txt
     mkdir -p empty_dir
 
-    ln -s ${genome_fasta} local_genome.fa
-    ln -s ${filtered_fai} local_genome.fa.fai
+    ln -fs ${genome_fasta} local_genome.fa
+    ln -fs ${filtered_fai} local_genome.fa.fai
 
     mkdir -p caveman_${chunk_bed.baseName}
     caveman.pl -o caveman_${chunk_bed.baseName} \\
