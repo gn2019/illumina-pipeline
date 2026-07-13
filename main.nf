@@ -325,7 +325,9 @@ workflow CAVEMAN {
     CAVEMAN_SETUP(ch_pair_ctx, genome_fasta, filtered_fai, caveman_blacklist, caveman_indels, caveman_indels_tbi)
 
     // one task per chromosome in the fai (mirrors NCHROM in the manual script)
-    ch_nchrom = filtered_fai.map { fai -> fai.readLines().findAll { it.trim() }.size() }
+    // NOTE: filtered_fai is a .collect()-ed channel, so it emits a List
+    // (even with a single file inside) rather than a bare Path - index in.
+    ch_nchrom = filtered_fai.map { fai -> (fai instanceof List ? fai[0] : fai).readLines().findAll { it.trim() }.size() }
 
     ch_split_in = CAVEMAN_SETUP.out
         .combine(ch_nchrom)
