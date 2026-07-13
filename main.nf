@@ -322,7 +322,13 @@ workflow CAVEMAN {
         [ tumor_meta, tumor_bam, tumor_bai, normal_meta, normal_bam, normal_bai, outdir ]
     }
 
+    // SETUP is the only step that touches the bam/reference channels - it
+    // symlinks everything caveman needs into the shared outdir ONCE, using
+    // fixed relative names. Every step after this only needs (tumor_meta,
+    // outdir[, idx]) - it cds into outdir and the relative names already
+    // resolve, so there's no repeated readlink/relinking per task.
     CAVEMAN_SETUP(ch_pair_ctx, genome_fasta, filtered_fai, caveman_blacklist, caveman_indels, caveman_indels_tbi)
+    // CAVEMAN_SETUP.out: tuple(tumor_meta, outdir)
 
     // one task per chromosome in the fai (mirrors NCHROM in the manual script)
     // NOTE: filtered_fai is a .collect()-ed channel, so it emits a List
@@ -331,50 +337,50 @@ workflow CAVEMAN {
 
     ch_split_in = CAVEMAN_SETUP.out
         .combine(ch_nchrom)
-        .flatMap { tumor_meta, tumor_bam, tumor_bai, normal_meta, normal_bam, normal_bai, outdir, nchrom ->
-            (1..nchrom).collect { idx -> [ tumor_meta, tumor_bam, tumor_bai, normal_meta, normal_bam, normal_bai, outdir, idx ] }
+        .flatMap { tumor_meta, outdir, nchrom ->
+            (1..nchrom).collect { idx -> [ tumor_meta, outdir, idx ] }
         }
 
-    CAVEMAN_SPLIT(ch_split_in, genome_fasta, filtered_fai, caveman_blacklist, caveman_indels, caveman_indels_tbi)
+    CAVEMAN_SPLIT(ch_split_in)
 
     // wait for ALL split tasks of a given pair before concatenating
     ch_split_grouped = CAVEMAN_SPLIT.out
         .groupTuple(by: 0)
-        .map { tm, tb, tbi, nm, nb, nbi, od -> [ tm, tb[0], tbi[0], nm[0], nb[0], nbi[0], od[0] ] }
+        .map { tm, od -> [ tm, od[0] ] }
 
-    CAVEMAN_SPLIT_CONCAT(ch_split_grouped, genome_fasta, filtered_fai, caveman_blacklist, caveman_indels, caveman_indels_tbi)
+    CAVEMAN_SPLIT_CONCAT(ch_split_grouped)
 
     // caveman's split step subdivides each chromosome further - read the
     // actual splitList it produced (dynamic, unknown until now) and fan out
     // one mstep task per chunk, capped at 200 concurrent via maxForks
     ch_mstep_in = CAVEMAN_SPLIT_CONCAT.out
-        .flatMap { tumor_meta, tumor_bam, tumor_bai, normal_meta, normal_bam, normal_bai, outdir ->
+        .flatMap { tumor_meta, outdir ->
             def nchunks = file("${outdir}/tmpCaveman/splitList").readLines().findAll { it.trim() }.size()
-            (1..nchunks).collect { idx -> [ tumor_meta, tumor_bam, tumor_bai, normal_meta, normal_bam, normal_bai, outdir, idx ] }
+            (1..nchunks).collect { idx -> [ tumor_meta, outdir, idx ] }
         }
 
-    CAVEMAN_MSTEP(ch_mstep_in, genome_fasta, filtered_fai, caveman_blacklist, caveman_indels, caveman_indels_tbi)
+    CAVEMAN_MSTEP(ch_mstep_in)
 
     ch_mstep_grouped = CAVEMAN_MSTEP.out
         .groupTuple(by: 0)
-        .map { tm, tb, tbi, nm, nb, nbi, od -> [ tm, tb[0], tbi[0], nm[0], nb[0], nbi[0], od[0] ] }
+        .map { tm, od -> [ tm, od[0] ] }
 
-    CAVEMAN_MERGE(ch_mstep_grouped, genome_fasta, filtered_fai, caveman_blacklist, caveman_indels, caveman_indels_tbi)
+    CAVEMAN_MERGE(ch_mstep_grouped)
 
     ch_estep_in = CAVEMAN_MERGE.out
-        .flatMap { tumor_meta, tumor_bam, tumor_bai, normal_meta, normal_bam, normal_bai, outdir ->
+        .flatMap { tumor_meta, outdir ->
             def nchunks = file("${outdir}/tmpCaveman/splitList").readLines().findAll { it.trim() }.size()
-            (1..nchunks).collect { idx -> [ tumor_meta, tumor_bam, tumor_bai, normal_meta, normal_bam, normal_bai, outdir, idx ] }
+            (1..nchunks).collect { idx -> [ tumor_meta, outdir, idx ] }
         }
 
-    CAVEMAN_ESTEP(ch_estep_in, genome_fasta, filtered_fai, caveman_blacklist, caveman_indels, caveman_indels_tbi)
+    CAVEMAN_ESTEP(ch_estep_in)
 
     ch_estep_grouped = CAVEMAN_ESTEP.out
         .groupTuple(by: 0)
-        .map { tm, tb, tbi, nm, nb, nbi, od -> [ tm, tb[0], tbi[0], nm[0], nb[0], nbi[0], od[0] ] }
+        .map { tm, od -> [ tm, od[0] ] }
 
-    CAVEMAN_MERGE_RESULTS(ch_estep_grouped, genome_fasta, filtered_fai, caveman_blacklist, caveman_indels, caveman_indels_tbi)
-    CAVEMAN_ADD_IDS(CAVEMAN_MERGE_RESULTS.out, genome_fasta, filtered_fai, caveman_blacklist, caveman_indels, caveman_indels_tbi)
+    CAVEMAN_MERGE_RESULTS(ch_estep_grouped)
+    CAVEMAN_ADD_IDS(CAVEMAN_MERGE_RESULTS.out)
 
     emit:
     CAVEMAN_ADD_IDS.out
@@ -395,22 +401,38 @@ process CAVEMAN_SETUP {
     path caveman_indels_tbi
 
     output:
-    tuple val(tumor_meta), path(tumor_bam), path(tumor_bai), val(normal_meta), path(normal_bam), path(normal_bai), val(outdir)
+    tuple val(tumor_meta), val(outdir)
 
     script:
     """
     mkdir -p ${outdir}
-    touch empty.txt
-    mkdir -p empty_dir
-    ln -fs ${genome_fasta} local_genome.fa
-    ln -fs ${filtered_fai} local_genome.fa.fai
+
+    # Symlink everything caveman needs into the shared outdir under FIXED
+    # relative names, once. Every later step just cds into outdir and
+    # references these names directly - no re-linking, no path resolution.
+    ln -fs \$(readlink -f ${genome_fasta}) ${outdir}/local_genome.fa
+    ln -fs \$(readlink -f ${filtered_fai}) ${outdir}/local_genome.fa.fai
+    ln -fs \$(readlink -f ${tumor_bam}) ${outdir}/tumor.bam
+    ln -fs \$(readlink -f ${tumor_bai}) ${outdir}/tumor.bam.bai
+    ln -fs \$(readlink -f ${normal_bam}) ${outdir}/normal.bam
+    ln -fs \$(readlink -f ${normal_bai}) ${outdir}/normal.bam.bai
+    ln -fs \$(readlink -f ${caveman_blacklist}) ${outdir}/blacklist.bed
+    ln -fs \$(readlink -f ${caveman_indels}) ${outdir}/indels.vcf.gz
+    ln -fs \$(readlink -f ${caveman_indels_tbi}) ${outdir}/indels.vcf.gz.tbi
+    touch ${outdir}/empty.txt
+    mkdir -p ${outdir}/empty_dir
+
+    # caveman.pl records the CWD it was invoked from as part of its setup
+    # state and refuses to run again from a different CWD, so every step
+    # must cd into this same fixed, shared outdir before invoking it.
+    cd ${outdir}
 
     caveman.pl -o ${outdir} \\
         -r local_genome.fa.fai \\
-        -tb ${tumor_bam} -nb ${normal_bam} \\
-        -ig ${caveman_blacklist} -tc empty.txt -td 3 -nc empty.txt -nd 3 \\
+        -tb tumor.bam -nb normal.bam \\
+        -ig blacklist.bed -tc empty.txt -td 3 -nc empty.txt -nd 3 \\
         -s Human -sa GRCh38 -b empty.txt \\
-        -in ${caveman_indels} \\
+        -in indels.vcf.gz \\
         -st genome -u empty_dir -noflag \\
         -process setup -index 1 2>&1
     """
@@ -423,29 +445,20 @@ process CAVEMAN_SPLIT {
     memory '4 GB'
 
     input:
-    tuple val(tumor_meta), path(tumor_bam), path(tumor_bai), val(normal_meta), path(normal_bam), path(normal_bai), val(outdir), val(idx)
-    path genome_fasta
-    path filtered_fai
-    path caveman_blacklist
-    path caveman_indels
-    path caveman_indels_tbi
+    tuple val(tumor_meta), val(outdir), val(idx)
 
     output:
-    tuple val(tumor_meta), path(tumor_bam), path(tumor_bai), val(normal_meta), path(normal_bam), path(normal_bai), val(outdir)
+    tuple val(tumor_meta), val(outdir)
 
     script:
     """
-    touch empty.txt
-    mkdir -p empty_dir
-    ln -fs ${genome_fasta} local_genome.fa
-    ln -fs ${filtered_fai} local_genome.fa.fai
-
+    cd ${outdir}
     caveman.pl -o ${outdir} \\
         -r local_genome.fa.fai \\
-        -tb ${tumor_bam} -nb ${normal_bam} \\
-        -ig ${caveman_blacklist} -tc empty.txt -td 3 -nc empty.txt -nd 3 \\
+        -tb tumor.bam -nb normal.bam \\
+        -ig blacklist.bed -tc empty.txt -td 3 -nc empty.txt -nd 3 \\
         -s Human -sa GRCh38 -b empty.txt \\
-        -in ${caveman_indels} \\
+        -in indels.vcf.gz \\
         -st genome -u empty_dir -noflag \\
         -process split -index ${idx} 2>&1
     """
@@ -458,29 +471,20 @@ process CAVEMAN_SPLIT_CONCAT {
     memory '4 GB'
 
     input:
-    tuple val(tumor_meta), path(tumor_bam), path(tumor_bai), val(normal_meta), path(normal_bam), path(normal_bai), val(outdir)
-    path genome_fasta
-    path filtered_fai
-    path caveman_blacklist
-    path caveman_indels
-    path caveman_indels_tbi
+    tuple val(tumor_meta), val(outdir)
 
     output:
-    tuple val(tumor_meta), path(tumor_bam), path(tumor_bai), val(normal_meta), path(normal_bam), path(normal_bai), val(outdir)
+    tuple val(tumor_meta), val(outdir)
 
     script:
     """
-    touch empty.txt
-    mkdir -p empty_dir
-    ln -fs ${genome_fasta} local_genome.fa
-    ln -fs ${filtered_fai} local_genome.fa.fai
-
+    cd ${outdir}
     caveman.pl -o ${outdir} \\
         -r local_genome.fa.fai \\
-        -tb ${tumor_bam} -nb ${normal_bam} \\
-        -ig ${caveman_blacklist} -tc empty.txt -td 3 -nc empty.txt -nd 3 \\
+        -tb tumor.bam -nb normal.bam \\
+        -ig blacklist.bed -tc empty.txt -td 3 -nc empty.txt -nd 3 \\
         -s Human -sa GRCh38 -b empty.txt \\
-        -in ${caveman_indels} \\
+        -in indels.vcf.gz \\
         -st genome -u empty_dir -noflag \\
         -process split_concat -index 1 2>&1
     """
@@ -494,29 +498,20 @@ process CAVEMAN_MSTEP {
     maxForks 200
 
     input:
-    tuple val(tumor_meta), path(tumor_bam), path(tumor_bai), val(normal_meta), path(normal_bam), path(normal_bai), val(outdir), val(idx)
-    path genome_fasta
-    path filtered_fai
-    path caveman_blacklist
-    path caveman_indels
-    path caveman_indels_tbi
+    tuple val(tumor_meta), val(outdir), val(idx)
 
     output:
-    tuple val(tumor_meta), path(tumor_bam), path(tumor_bai), val(normal_meta), path(normal_bam), path(normal_bai), val(outdir)
+    tuple val(tumor_meta), val(outdir)
 
     script:
     """
-    touch empty.txt
-    mkdir -p empty_dir
-    ln -fs ${genome_fasta} local_genome.fa
-    ln -fs ${filtered_fai} local_genome.fa.fai
-
+    cd ${outdir}
     caveman.pl -o ${outdir} \\
         -r local_genome.fa.fai \\
-        -tb ${tumor_bam} -nb ${normal_bam} \\
-        -ig ${caveman_blacklist} -tc empty.txt -td 3 -nc empty.txt -nd 3 \\
+        -tb tumor.bam -nb normal.bam \\
+        -ig blacklist.bed -tc empty.txt -td 3 -nc empty.txt -nd 3 \\
         -s Human -sa GRCh38 -b empty.txt \\
-        -in ${caveman_indels} \\
+        -in indels.vcf.gz \\
         -st genome -u empty_dir -noflag \\
         -process mstep -index ${idx} 2>&1
     """
@@ -529,29 +524,20 @@ process CAVEMAN_MERGE {
     memory '48 GB'
 
     input:
-    tuple val(tumor_meta), path(tumor_bam), path(tumor_bai), val(normal_meta), path(normal_bam), path(normal_bai), val(outdir)
-    path genome_fasta
-    path filtered_fai
-    path caveman_blacklist
-    path caveman_indels
-    path caveman_indels_tbi
+    tuple val(tumor_meta), val(outdir)
 
     output:
-    tuple val(tumor_meta), path(tumor_bam), path(tumor_bai), val(normal_meta), path(normal_bam), path(normal_bai), val(outdir)
+    tuple val(tumor_meta), val(outdir)
 
     script:
     """
-    touch empty.txt
-    mkdir -p empty_dir
-    ln -fs ${genome_fasta} local_genome.fa
-    ln -fs ${filtered_fai} local_genome.fa.fai
-
+    cd ${outdir}
     caveman.pl -o ${outdir} \\
         -r local_genome.fa.fai \\
-        -tb ${tumor_bam} -nb ${normal_bam} \\
-        -ig ${caveman_blacklist} -tc empty.txt -td 3 -nc empty.txt -nd 3 \\
+        -tb tumor.bam -nb normal.bam \\
+        -ig blacklist.bed -tc empty.txt -td 3 -nc empty.txt -nd 3 \\
         -s Human -sa GRCh38 -b empty.txt \\
-        -in ${caveman_indels} \\
+        -in indels.vcf.gz \\
         -st genome -u empty_dir -noflag \\
         -process merge -index 1 2>&1
     """
@@ -565,29 +551,20 @@ process CAVEMAN_ESTEP {
     maxForks 200
 
     input:
-    tuple val(tumor_meta), path(tumor_bam), path(tumor_bai), val(normal_meta), path(normal_bam), path(normal_bai), val(outdir), val(idx)
-    path genome_fasta
-    path filtered_fai
-    path caveman_blacklist
-    path caveman_indels
-    path caveman_indels_tbi
+    tuple val(tumor_meta), val(outdir), val(idx)
 
     output:
-    tuple val(tumor_meta), path(tumor_bam), path(tumor_bai), val(normal_meta), path(normal_bam), path(normal_bai), val(outdir)
+    tuple val(tumor_meta), val(outdir)
 
     script:
     """
-    touch empty.txt
-    mkdir -p empty_dir
-    ln -fs ${genome_fasta} local_genome.fa
-    ln -fs ${filtered_fai} local_genome.fa.fai
-
+    cd ${outdir}
     caveman.pl -o ${outdir} \\
         -r local_genome.fa.fai \\
-        -tb ${tumor_bam} -nb ${normal_bam} \\
-        -ig ${caveman_blacklist} -tc empty.txt -td 3 -nc empty.txt -nd 3 \\
+        -tb tumor.bam -nb normal.bam \\
+        -ig blacklist.bed -tc empty.txt -td 3 -nc empty.txt -nd 3 \\
         -s Human -sa GRCh38 -b empty.txt \\
-        -in ${caveman_indels} \\
+        -in indels.vcf.gz \\
         -st genome -u empty_dir -noflag \\
         -process estep -index ${idx} 2>&1
     """
@@ -600,29 +577,20 @@ process CAVEMAN_MERGE_RESULTS {
     memory '48 GB'
 
     input:
-    tuple val(tumor_meta), path(tumor_bam), path(tumor_bai), val(normal_meta), path(normal_bam), path(normal_bai), val(outdir)
-    path genome_fasta
-    path filtered_fai
-    path caveman_blacklist
-    path caveman_indels
-    path caveman_indels_tbi
+    tuple val(tumor_meta), val(outdir)
 
     output:
-    tuple val(tumor_meta), path(tumor_bam), path(tumor_bai), val(normal_meta), path(normal_bam), path(normal_bai), val(outdir)
+    tuple val(tumor_meta), val(outdir)
 
     script:
     """
-    touch empty.txt
-    mkdir -p empty_dir
-    ln -fs ${genome_fasta} local_genome.fa
-    ln -fs ${filtered_fai} local_genome.fa.fai
-
+    cd ${outdir}
     caveman.pl -o ${outdir} \\
         -r local_genome.fa.fai \\
-        -tb ${tumor_bam} -nb ${normal_bam} \\
-        -ig ${caveman_blacklist} -tc empty.txt -td 3 -nc empty.txt -nd 3 \\
+        -tb tumor.bam -nb normal.bam \\
+        -ig blacklist.bed -tc empty.txt -td 3 -nc empty.txt -nd 3 \\
         -s Human -sa GRCh38 -b empty.txt \\
-        -in ${caveman_indels} \\
+        -in indels.vcf.gz \\
         -st genome -u empty_dir -noflag \\
         -process merge_results -index 1 2>&1
     """
@@ -636,35 +604,29 @@ process CAVEMAN_ADD_IDS {
     memory '48 GB'
 
     input:
-    tuple val(tumor_meta), path(tumor_bam), path(tumor_bai), val(normal_meta), path(normal_bam), path(normal_bai), val(outdir)
-    path genome_fasta
-    path filtered_fai
-    path caveman_blacklist
-    path caveman_indels
-    path caveman_indels_tbi
+    tuple val(tumor_meta), val(outdir)
 
     output:
     path "caveman_done.flag"
 
     script:
     """
-    touch empty.txt
-    mkdir -p empty_dir
-    ln -fs ${genome_fasta} local_genome.fa
-    ln -fs ${filtered_fai} local_genome.fa.fai
-
+    ORIG_DIR=\$PWD
+    cd ${outdir}
     caveman.pl -o ${outdir} \\
         -r local_genome.fa.fai \\
-        -tb ${tumor_bam} -nb ${normal_bam} \\
-        -ig ${caveman_blacklist} -tc empty.txt -td 3 -nc empty.txt -nd 3 \\
+        -tb tumor.bam -nb normal.bam \\
+        -ig blacklist.bed -tc empty.txt -td 3 -nc empty.txt -nd 3 \\
         -s Human -sa GRCh38 -b empty.txt \\
-        -in ${caveman_indels} \\
+        -in indels.vcf.gz \\
         -st genome -u empty_dir -noflag \\
         -process add_ids -index 1 2>&1
 
-    echo "done" > caveman_done.flag
+    echo "done" > ${outdir}/caveman_done.flag
+    ln -fs ${outdir}/caveman_done.flag \$ORIG_DIR/caveman_done.flag
     """
 }
+
 
 // --- NEW GATHER PROCESSES ---
 process MERGE_GATK_VCFS {
