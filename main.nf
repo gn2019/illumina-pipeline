@@ -74,9 +74,10 @@ workflow {
     // 8. Single-Sample Analyses (Parallel execution for all inputs via mix)
     ch_all_samples = ch_tumor_samples.mix(ch_normal_sample)
 
-    RUN_LUMPY(ch_all_samples, PREPARE_BEDS.out.exclude_bed.collect())
+    ch_lumpy = RUN_LUMPY(ch_all_samples, PREPARE_BEDS.out.exclude_bed.collect())
     RUN_STATS(ch_all_samples)
     RUN_AMPLICONARCHITECT(ch_tumor_samples)
+    ch_coverage = COVERAGE(ch_tumor_samples.map { meta, bam, bai -> meta })
 
     // 9. Somatic Paired Analyses
     ch_paired_somatic = ch_tumor_samples.combine(ch_normal_sample)
@@ -90,26 +91,83 @@ workflow {
     // --- RUN SCATTERED TOOLS ---
     RUN_GATK(ch_scattered_somatic)
 
-    // CAVEMAN is NOT BED-chunked here. caveman.pl does its own internal
-    // chromosome-level split/mstep/estep parallelization, so we drive that
-    // explicitly as one Nextflow/LSF task per split index (mirrors the
-    // manual bsub job-array script) instead of letting a single caveman.pl
-    // invocation loop over everything internally with -t.
-    CAVEMAN(
-        ch_paired_somatic,
-        ch_genome_fa,
-        PREPARE_BEDS.out.filtered_fai.collect(),
-        DOWNLOAD_REFS.out.caveman_blacklist.collect(),
-        DOWNLOAD_REFS.out.caveman_indels.collect(),
-        DOWNLOAD_REFS.out.caveman_indels_tbi.collect()
-    )
-
     // --- GATHER RESULTS ---
     // merge GATK results
     gatk_per_sample_ch = RUN_GATK.out.groupTuple(by: 0)
     MERGE_GATK_VCFS(gatk_per_sample_ch)
 
+    // ASCAT now has to run BEFORE CaVEMan: CaVEMan's copy-number input
+    // (-tc/-nc) and normal contamination (-k) are derived directly from
+    // ASCAT's per-tumor copynumber.caveman.csv and samplestatistics.txt.
     RUN_ASCAT(ch_paired_somatic, DOWNLOAD_REFS.out.ascat_gc_correction.collect())
+    ASCAT_TO_CAVEMAN(RUN_ASCAT.out.ascat_out)
+
+    // Build the caveman.pl copy-number flags ONCE per tumor/normal pair here,
+    // so every caveman.pl step downstream (setup, split, mstep, estep, ...)
+    // is invoked with identical, consistent flags. Default is to follow the
+    // ASCAT->CaVEMan flow (params.follow_ascat_caveman_flow = true); set it
+    // to false to always use the flat -td/-nd defaults instead. Even when
+    // set to follow, if ASCAT didn't produce usable cn.bed files or a normal
+    // contamination value for a sample, this still falls back to -td/-nd
+    // rather than failing the pair.
+    ch_cn_args = ASCAT_TO_CAVEMAN.out.cn_data.map { tumor_meta, normal_meta, tumor_cn_bed, normal_cn_bed, normal_contamination ->
+        def has_cn_data = params.follow_ascat_caveman_flow &&
+            tumor_cn_bed.size() > 0 && normal_cn_bed.size() > 0 && normal_contamination?.trim()
+        def cn_args = has_cn_data
+            ? "-tc tumor_cn.bed -nc normal_cn.bed -k ${normal_contamination.trim()}"
+            : "-td 5 -nd 2"
+        [ tumor_meta.id, tumor_meta, tumor_cn_bed, normal_cn_bed, cn_args ]
+    }
+
+    // CAVEMAN is NOT BED-chunked here. caveman.pl does its own internal
+    // chromosome-level split/mstep/estep parallelization, so we drive that
+    // explicitly as one Nextflow/LSF task per split index (mirrors the
+    // manual bsub job-array script) instead of letting a single caveman.pl
+    // invocation loop over everything internally with -t.
+    ch_caveman_done = CAVEMAN(
+        ch_paired_somatic,
+        ch_genome_fa,
+        PREPARE_BEDS.out.filtered_fai.collect(),
+        DOWNLOAD_REFS.out.caveman_blacklist.collect(),
+        DOWNLOAD_REFS.out.caveman_indels.collect(),
+        DOWNLOAD_REFS.out.caveman_indels_tbi.collect(),
+        ch_cn_args
+    )
+
+    // --- FINAL VISUALIZATION ARCHIVE ---
+    // There's exactly one normal sample for the whole run (params.normal),
+    // so it's referenced by id directly below rather than carried through
+    // every channel as its own value.
+    ch_tumor_lumpy_dir = ch_lumpy.lumpy_out
+        .filter { meta, dir -> meta.type == 'tumor' }
+        .map { meta, dir -> [ meta.id, dir ] }
+
+    ch_normal_lumpy_dir = ch_lumpy.lumpy_out
+        .filter { meta, dir -> meta.type == 'normal' }
+        .map { meta, dir -> dir }
+        .collect()
+
+    ch_coverage_bg = ch_coverage.coverage
+        .map { meta, bg -> [ meta.id, bg ] }
+
+    ch_ascat_dir = RUN_ASCAT.out.ascat_out
+        .map { tumor_meta, normal_meta, dir -> [ tumor_meta.id, dir ] }
+
+    ch_caveman_flag = ch_caveman_done
+        .map { tumor_meta, flag -> [ tumor_meta.id, flag ] }
+
+    ch_archive_in = ch_paired_somatic
+        .map { tumor_meta, tumor_bam, tumor_bai, normal_meta, normal_bam, normal_bai -> [ tumor_meta.id, tumor_meta ] }
+        .join(ch_tumor_lumpy_dir)
+        .join(ch_coverage_bg)
+        .join(ch_ascat_dir)
+        .join(ch_caveman_flag)
+        .combine(ch_normal_lumpy_dir)
+        .map { id, tumor_meta, tumor_lumpy_dir, coverage_bg, ascat_dir, caveman_flag, normal_lumpy_dir ->
+            [ tumor_meta, tumor_lumpy_dir, normal_lumpy_dir, coverage_bg, ascat_dir, caveman_flag ]
+        }
+
+    ARCHIVE(ch_archive_in)
 }
 
 // ==========================================
@@ -234,26 +292,50 @@ process SPLIT_BED_INTO_CHUNKS {
 process RUN_LUMPY {
     tag "${meta.id}_${meta.type}"
     conda "${params.lumpy_env}"
-    publishDir "${params.results}/${meta.id}/lumpy", mode: 'copy'
+    publishDir "${params.results}/${meta.id}", mode: 'copy'
 
     input:
     tuple val(meta), path(bam), path(bai)
     path exclude_bed
 
     output:
-    path "lumpy"
+    tuple val(meta), path("lumpy"), emit: lumpy_out
 
     script:
     """
-    module load miniconda
     bash ${params.scripts}/sv.sh ${meta.id} ${bam} ${params.genome} ${exclude_bed} 2>&1
+    """
+}
+
+// Locates the per-lane *_sorted.dedup.bw coverage tracks for a tumor sample
+// (they're written into the fastq directory tree by preprocess.sh, next to
+// the source fastqs, not into the Nextflow work dir) and merges them into a
+// single sorted bedGraph.
+process COVERAGE {
+    tag "${tumor_meta.id}_coverage"
+    conda "${params.bw_env}"
+    publishDir "${params.results}/${tumor_meta.id}/coverage", mode: 'copy'
+
+    input:
+    val tumor_meta
+
+    output:
+    tuple val(tumor_meta), path("coverage.sorted.bedGraph"), emit: coverage
+
+    script:
+    """
+    find "${params.results}/${tumor_meta.id}" -type f -name "*_sorted.dedup.bw" | sort > bw_list.txt
+
+    bigWigMerge -inList bw_list.txt coverage.bedGraph
+
+    sort -k1,1 -k2,2n coverage.bedGraph > coverage.sorted.bedGraph
     """
 }
 
 process RUN_STATS {
     tag "${meta.id}_${meta.type}"
     conda "${params.lumpy_env}"
-    publishDir "${params.results}/${meta.id}/stats", mode: 'copy'
+    publishDir "${params.results}/${meta.id}", mode: 'copy'
 
     input:
     tuple val(meta), path(bam), path(bai)
@@ -263,7 +345,6 @@ process RUN_STATS {
 
     script:
     """
-    module load miniconda
     export REF_PATH=${params.genome}
     bash ${params.scripts}/stats.sh ${meta.id} ${bam} 2>&1
     """
@@ -315,20 +396,27 @@ workflow CAVEMAN {
     caveman_blacklist
     caveman_indels
     caveman_indels_tbi
+    ch_cn_args             // tuple(tumor_meta.id, tumor_meta, tumor_cn_bed, normal_cn_bed, cn_args) - see ASCAT_TO_CAVEMAN
 
     main:
-    ch_pair_ctx = ch_pairs.map { tumor_meta, tumor_bam, tumor_bai, normal_meta, normal_bam, normal_bai ->
-        def outdir = "${params.results}/${tumor_meta.id}/caveman"
-        [ tumor_meta, tumor_bam, tumor_bai, normal_meta, normal_bam, normal_bai, outdir ]
-    }
+    ch_pair_ctx = ch_pairs
+        .map { tumor_meta, tumor_bam, tumor_bai, normal_meta, normal_bam, normal_bai ->
+            def outdir = "${params.results}/${tumor_meta.id}/caveman"
+            [ tumor_meta.id, tumor_meta, tumor_bam, tumor_bai, normal_meta, normal_bam, normal_bai, outdir ]
+        }
+        .join(ch_cn_args.map { id, tumor_meta, tumor_cn_bed, normal_cn_bed, cn_args -> [ id, tumor_cn_bed, normal_cn_bed, cn_args ] })
+        .map { id, tumor_meta, tumor_bam, tumor_bai, normal_meta, normal_bam, normal_bai, outdir, tumor_cn_bed, normal_cn_bed, cn_args ->
+            [ tumor_meta, tumor_bam, tumor_bai, normal_meta, normal_bam, normal_bai, outdir, tumor_cn_bed, normal_cn_bed, cn_args ]
+        }
 
-    // SETUP is the only step that touches the bam/reference channels - it
-    // symlinks everything caveman needs into the shared outdir ONCE, using
-    // fixed relative names. Every step after this only needs (tumor_meta,
-    // outdir[, idx]) - it cds into outdir and the relative names already
+    // SETUP is the only step that touches the bam/reference/cn.bed channels
+    // - it symlinks everything caveman needs into the shared outdir ONCE,
+    // using fixed relative names, and carries the resolved cn_args string
+    // forward. Every step after this only needs (tumor_meta, outdir,
+    // cn_args[, idx]) - it cds into outdir and the relative names already
     // resolve, so there's no repeated readlink/relinking per task.
     CAVEMAN_SETUP(ch_pair_ctx, genome_fasta, filtered_fai, caveman_blacklist, caveman_indels, caveman_indels_tbi)
-    // CAVEMAN_SETUP.out: tuple(tumor_meta, outdir)
+    // CAVEMAN_SETUP.out: tuple(tumor_meta, outdir, cn_args)
 
     // one task per chromosome in the fai (mirrors NCHROM in the manual script)
     // NOTE: filtered_fai is a .collect()-ed channel, so it emits a List
@@ -337,8 +425,8 @@ workflow CAVEMAN {
 
     ch_split_in = CAVEMAN_SETUP.out
         .combine(ch_nchrom)
-        .flatMap { tumor_meta, outdir, nchrom ->
-            (1..nchrom).collect { idx -> [ tumor_meta, outdir, idx ] }
+        .flatMap { tumor_meta, outdir, cn_args, nchrom ->
+            (1..nchrom).collect { idx -> [ tumor_meta, outdir, cn_args, idx ] }
         }
 
     CAVEMAN_SPLIT(ch_split_in)
@@ -346,7 +434,7 @@ workflow CAVEMAN {
     // wait for ALL split tasks of a given pair before concatenating
     ch_split_grouped = CAVEMAN_SPLIT.out
         .groupTuple(by: 0)
-        .map { tm, od -> [ tm, od[0] ] }
+        .map { tm, od, ca -> [ tm, od[0], ca[0] ] }
 
     CAVEMAN_SPLIT_CONCAT(ch_split_grouped)
 
@@ -354,30 +442,30 @@ workflow CAVEMAN {
     // actual splitList it produced (dynamic, unknown until now) and fan out
     // one mstep task per chunk, capped at 200 concurrent via maxForks
     ch_mstep_in = CAVEMAN_SPLIT_CONCAT.out
-        .flatMap { tumor_meta, outdir ->
+        .flatMap { tumor_meta, outdir, cn_args ->
             def nchunks = file("${outdir}/tmpCaveman/splitList").readLines().findAll { it.trim() }.size()
-            (1..nchunks).collect { idx -> [ tumor_meta, outdir, idx ] }
+            (1..nchunks).collect { idx -> [ tumor_meta, outdir, cn_args, idx ] }
         }
 
     CAVEMAN_MSTEP(ch_mstep_in)
 
     ch_mstep_grouped = CAVEMAN_MSTEP.out
         .groupTuple(by: 0)
-        .map { tm, od -> [ tm, od[0] ] }
+        .map { tm, od, ca -> [ tm, od[0], ca[0] ] }
 
     CAVEMAN_MERGE(ch_mstep_grouped)
 
     ch_estep_in = CAVEMAN_MERGE.out
-        .flatMap { tumor_meta, outdir ->
+        .flatMap { tumor_meta, outdir, cn_args ->
             def nchunks = file("${outdir}/tmpCaveman/splitList").readLines().findAll { it.trim() }.size()
-            (1..nchunks).collect { idx -> [ tumor_meta, outdir, idx ] }
+            (1..nchunks).collect { idx -> [ tumor_meta, outdir, cn_args, idx ] }
         }
 
     CAVEMAN_ESTEP(ch_estep_in)
 
     ch_estep_grouped = CAVEMAN_ESTEP.out
         .groupTuple(by: 0)
-        .map { tm, od -> [ tm, od[0] ] }
+        .map { tm, od, ca -> [ tm, od[0], ca[0] ] }
 
     CAVEMAN_MERGE_RESULTS(ch_estep_grouped)
     CAVEMAN_ADD_IDS(CAVEMAN_MERGE_RESULTS.out)
@@ -393,7 +481,7 @@ process CAVEMAN_SETUP {
     memory '4 GB'
 
     input:
-    tuple val(tumor_meta), path(tumor_bam), path(tumor_bai), val(normal_meta), path(normal_bam), path(normal_bai), val(outdir)
+    tuple val(tumor_meta), path(tumor_bam), path(tumor_bai), val(normal_meta), path(normal_bam), path(normal_bai), val(outdir), path(tumor_cn_bed), path(normal_cn_bed), val(cn_args)
     path genome_fasta
     path filtered_fai
     path caveman_blacklist
@@ -401,7 +489,7 @@ process CAVEMAN_SETUP {
     path caveman_indels_tbi
 
     output:
-    tuple val(tumor_meta), val(outdir)
+    tuple val(tumor_meta), val(outdir), val(cn_args)
 
     script:
     """
@@ -410,12 +498,17 @@ process CAVEMAN_SETUP {
     # Symlink everything caveman needs into the shared outdir under FIXED
     # relative names, once. Every later step just cds into outdir and
     # references these names directly - no re-linking, no path resolution.
+    # tumor_cn.bed/normal_cn.bed are always linked (even when cn_args falls
+    # back to -td/-nd and doesn't reference them) so the outdir layout is
+    # identical either way.
     ln -fs \$(readlink -f ${genome_fasta}) ${outdir}/local_genome.fa
     ln -fs \$(readlink -f ${filtered_fai}) ${outdir}/local_genome.fa.fai
     ln -fs \$(readlink -f ${tumor_bam}) ${outdir}/tumor.bam
     ln -fs \$(readlink -f ${tumor_bai}) ${outdir}/tumor.bam.bai
     ln -fs \$(readlink -f ${normal_bam}) ${outdir}/normal.bam
     ln -fs \$(readlink -f ${normal_bai}) ${outdir}/normal.bam.bai
+    ln -fs \$(readlink -f ${tumor_cn_bed}) ${outdir}/tumor_cn.bed
+    ln -fs \$(readlink -f ${normal_cn_bed}) ${outdir}/normal_cn.bed
     ln -fs \$(readlink -f ${caveman_blacklist}) ${outdir}/blacklist.bed
     ln -fs \$(readlink -f ${caveman_indels}) ${outdir}/indels.vcf.gz
     ln -fs \$(readlink -f ${caveman_indels_tbi}) ${outdir}/indels.vcf.gz.tbi
@@ -430,10 +523,11 @@ process CAVEMAN_SETUP {
     caveman.pl -o ${outdir} \\
         -r local_genome.fa.fai \\
         -tb tumor.bam -nb normal.bam \\
-        -ig blacklist.bed -tc empty.txt -td 3 -nc empty.txt -nd 3 \\
+        -ig blacklist.bed ${cn_args} \\
         -s Human -sa GRCh38 -b empty.txt \\
         -in indels.vcf.gz \\
         -st genome -u empty_dir -noflag \\
+        -e 3500000 \\
         -process setup -index 1 2>&1
     """
 }
@@ -445,10 +539,10 @@ process CAVEMAN_SPLIT {
     memory '4 GB'
 
     input:
-    tuple val(tumor_meta), val(outdir), val(idx)
+    tuple val(tumor_meta), val(outdir), val(cn_args), val(idx)
 
     output:
-    tuple val(tumor_meta), val(outdir)
+    tuple val(tumor_meta), val(outdir), val(cn_args)
 
     script:
     """
@@ -456,10 +550,11 @@ process CAVEMAN_SPLIT {
     caveman.pl -o ${outdir} \\
         -r local_genome.fa.fai \\
         -tb tumor.bam -nb normal.bam \\
-        -ig blacklist.bed -tc empty.txt -td 3 -nc empty.txt -nd 3 \\
+        -ig blacklist.bed ${cn_args} \\
         -s Human -sa GRCh38 -b empty.txt \\
         -in indels.vcf.gz \\
         -st genome -u empty_dir -noflag \\
+        -e 3500000 \\
         -process split -index ${idx} 2>&1
     """
 }
@@ -471,10 +566,10 @@ process CAVEMAN_SPLIT_CONCAT {
     memory '4 GB'
 
     input:
-    tuple val(tumor_meta), val(outdir)
+    tuple val(tumor_meta), val(outdir), val(cn_args)
 
     output:
-    tuple val(tumor_meta), val(outdir)
+    tuple val(tumor_meta), val(outdir), val(cn_args)
 
     script:
     """
@@ -482,10 +577,11 @@ process CAVEMAN_SPLIT_CONCAT {
     caveman.pl -o ${outdir} \\
         -r local_genome.fa.fai \\
         -tb tumor.bam -nb normal.bam \\
-        -ig blacklist.bed -tc empty.txt -td 3 -nc empty.txt -nd 3 \\
+        -ig blacklist.bed ${cn_args} \\
         -s Human -sa GRCh38 -b empty.txt \\
         -in indels.vcf.gz \\
         -st genome -u empty_dir -noflag \\
+        -e 3500000 \\
         -process split_concat -index 1 2>&1
     """
 }
@@ -498,10 +594,10 @@ process CAVEMAN_MSTEP {
     maxForks 200
 
     input:
-    tuple val(tumor_meta), val(outdir), val(idx)
+    tuple val(tumor_meta), val(outdir), val(cn_args), val(idx)
 
     output:
-    tuple val(tumor_meta), val(outdir)
+    tuple val(tumor_meta), val(outdir), val(cn_args)
 
     script:
     """
@@ -509,10 +605,11 @@ process CAVEMAN_MSTEP {
     caveman.pl -o ${outdir} \\
         -r local_genome.fa.fai \\
         -tb tumor.bam -nb normal.bam \\
-        -ig blacklist.bed -tc empty.txt -td 3 -nc empty.txt -nd 3 \\
+        -ig blacklist.bed ${cn_args} \\
         -s Human -sa GRCh38 -b empty.txt \\
         -in indels.vcf.gz \\
         -st genome -u empty_dir -noflag \\
+        -e 3500000 \\
         -process mstep -index ${idx} 2>&1
     """
 }
@@ -524,10 +621,10 @@ process CAVEMAN_MERGE {
     memory '48 GB'
 
     input:
-    tuple val(tumor_meta), val(outdir)
+    tuple val(tumor_meta), val(outdir), val(cn_args)
 
     output:
-    tuple val(tumor_meta), val(outdir)
+    tuple val(tumor_meta), val(outdir), val(cn_args)
 
     script:
     """
@@ -535,10 +632,11 @@ process CAVEMAN_MERGE {
     caveman.pl -o ${outdir} \\
         -r local_genome.fa.fai \\
         -tb tumor.bam -nb normal.bam \\
-        -ig blacklist.bed -tc empty.txt -td 3 -nc empty.txt -nd 3 \\
+        -ig blacklist.bed ${cn_args} \\
         -s Human -sa GRCh38 -b empty.txt \\
         -in indels.vcf.gz \\
         -st genome -u empty_dir -noflag \\
+        -e 3500000 \\
         -process merge -index 1 2>&1
     """
 }
@@ -551,10 +649,10 @@ process CAVEMAN_ESTEP {
     maxForks 200
 
     input:
-    tuple val(tumor_meta), val(outdir), val(idx)
+    tuple val(tumor_meta), val(outdir), val(cn_args), val(idx)
 
     output:
-    tuple val(tumor_meta), val(outdir)
+    tuple val(tumor_meta), val(outdir), val(cn_args)
 
     script:
     """
@@ -562,10 +660,11 @@ process CAVEMAN_ESTEP {
     caveman.pl -o ${outdir} \\
         -r local_genome.fa.fai \\
         -tb tumor.bam -nb normal.bam \\
-        -ig blacklist.bed -tc empty.txt -td 3 -nc empty.txt -nd 3 \\
+        -ig blacklist.bed ${cn_args} \\
         -s Human -sa GRCh38 -b empty.txt \\
         -in indels.vcf.gz \\
         -st genome -u empty_dir -noflag \\
+        -e 3500000 \\
         -process estep -index ${idx} 2>&1
     """
 }
@@ -577,10 +676,10 @@ process CAVEMAN_MERGE_RESULTS {
     memory '48 GB'
 
     input:
-    tuple val(tumor_meta), val(outdir)
+    tuple val(tumor_meta), val(outdir), val(cn_args)
 
     output:
-    tuple val(tumor_meta), val(outdir)
+    tuple val(tumor_meta), val(outdir), val(cn_args)
 
     script:
     """
@@ -588,10 +687,11 @@ process CAVEMAN_MERGE_RESULTS {
     caveman.pl -o ${outdir} \\
         -r local_genome.fa.fai \\
         -tb tumor.bam -nb normal.bam \\
-        -ig blacklist.bed -tc empty.txt -td 3 -nc empty.txt -nd 3 \\
+        -ig blacklist.bed ${cn_args} \\
         -s Human -sa GRCh38 -b empty.txt \\
         -in indels.vcf.gz \\
         -st genome -u empty_dir -noflag \\
+        -e 3500000 \\
         -process merge_results -index 1 2>&1
     """
 }
@@ -604,10 +704,10 @@ process CAVEMAN_ADD_IDS {
     memory '48 GB'
 
     input:
-    tuple val(tumor_meta), val(outdir)
+    tuple val(tumor_meta), val(outdir), val(cn_args)
 
     output:
-    path "caveman_done.flag"
+    tuple val(tumor_meta), path("caveman_done.flag")
 
     script:
     """
@@ -616,10 +716,11 @@ process CAVEMAN_ADD_IDS {
     caveman.pl -o ${outdir} \\
         -r local_genome.fa.fai \\
         -tb tumor.bam -nb normal.bam \\
-        -ig blacklist.bed -tc empty.txt -td 3 -nc empty.txt -nd 3 \\
+        -ig blacklist.bed ${cn_args} \\
         -s Human -sa GRCh38 -b empty.txt \\
         -in indels.vcf.gz \\
         -st genome -u empty_dir -noflag \\
+        -e 3500000 \\
         -process add_ids -index 1 2>&1
 
     echo "done" > ${outdir}/caveman_done.flag
@@ -658,9 +759,12 @@ process RUN_ASCAT {
     path ascat_gc_correction
 
     output:
-    path "ascat"
+    tuple val(tumor_meta), val(normal_meta), path("ascat"), emit: ascat_out
 
     script:
+    // -pu/-pi are only passed when BOTH ascat_purity and ascat_ploidy are
+    // set - otherwise ascat.pl estimates them itself.
+    def purity_ploidy_args = (params.ascat_purity && params.ascat_ploidy) ? "-pu ${params.ascat_purity} -pi ${params.ascat_ploidy}" : ''
     """
     mkdir -p ascat
     ascat.pl -o ascat \\
@@ -669,7 +773,45 @@ process RUN_ASCAT {
         -r ${params.genome} -pr WGS -g XY -gc chrY \\
         -rs ${params.species} \\
         -ra ${params.assembly} \\
-        -sg ${ascat_gc_correction} -c 8 2>&1
+        -sg ${ascat_gc_correction} -c 8 ${purity_ploidy_args} 2>&1
+    """
+}
+
+// ASCAT's per-tumour copynumber.caveman.csv already carries both the tumour
+// and normal copy-number segments (columns: chr,start,stop,normal_total_cn,
+// normal_minor_cn,tumour_total_cn,tumour_minor_cn - 1-indexed after
+// splitting on comma), and its samplestatistics.txt carries the normal
+// contamination fraction CaVEMan expects via -k. This process turns those
+// into the two BED files + contamination value CaVEMan needs.
+process ASCAT_TO_CAVEMAN {
+    tag "${tumor_meta.id}_ascat2caveman"
+    container "${params.cgpwgs_sif}"
+    cpus 1
+    memory '1 GB'
+
+    input:
+    tuple val(tumor_meta), val(normal_meta), path(ascat_dir)
+
+    output:
+    tuple val(tumor_meta), val(normal_meta), path("${tumor_meta.id}.cn.bed"), path("${normal_meta.id}.cn.bed"), env(NORMAL_CONTAMINATION), emit: cn_data
+
+    script:
+    """
+    set +e
+
+    perl -ne '@F=(split q{,}, \$_)[1,2,3,6]; \$F[1]--; print join("\\t",@F)."\\n";' \\
+        < ${ascat_dir}/${tumor_meta.id}.copynumber.caveman.csv > ${tumor_meta.id}.cn.bed
+
+    perl -ne '@F=(split q{,}, \$_)[1,2,3,4]; \$F[1]--; print join("\\t",@F)."\\n";' \\
+        < ${ascat_dir}/${tumor_meta.id}.copynumber.caveman.csv > ${normal_meta.id}.cn.bed
+
+    NORMAL_CONTAMINATION=\$(awk '(\$1=="NormalContamination") {print \$2}' ${ascat_dir}/${tumor_meta.id}.samplestatistics.txt)
+
+    # if ASCAT's outputs weren't there or were malformed, still land empty
+    # files/an empty value here rather than failing the pair - ch_cn_args
+    # in the main workflow falls back to flat -td/-nd when this happens.
+    touch ${tumor_meta.id}.cn.bed ${normal_meta.id}.cn.bed
+    true
     """
 }
 
@@ -686,7 +828,63 @@ process RUN_AMPLICONARCHITECT {
 
     script:
     """
-    module load miniconda
     AmpliconSuite-pipeline.py -s ${meta.id} -t 16 --bam ${bam} --run_AA --run_AC 2>&1
+    """
+}
+
+// Bundles the per-tumor visualization inputs into a single tar.gz. sample.vcf
+// (the tumor's lumpy SV calls) is the only mandatory member - everything
+// else is included if present and silently skipped otherwise. The caveman
+// SNV vcf is read from its well-known published path (same convention the
+// CAVEMAN subworkflow above uses for its shared outdir) rather than staged
+// as a formal Nextflow input, since it's one of several optional members.
+process ARCHIVE {
+    tag "${tumor_meta.id}_vs_${params.normal}_archive"
+    conda "${params.bw_env}"
+    publishDir "${params.results}/${tumor_meta.id}", mode: 'copy'
+
+    input:
+    tuple val(tumor_meta), path(tumor_lumpy_dir, stageAs: 'tumor_lumpy'), path(normal_lumpy_dir, stageAs: 'normal_lumpy'), path(coverage_bg), path(ascat_dir), path(caveman_flag)
+
+    output:
+    path "${tumor_meta.id}_vs_${params.normal}.visualize.tar.gz"
+
+    script:
+    def caveman_vcf_gz = "${params.results}/${tumor_meta.id}/caveman/${tumor_meta.id}_vs_${params.normal}.muts.ids.vcf.gz"
+    def archive_name    = "${tumor_meta.id}_vs_${params.normal}.visualize.tar.gz"
+    """
+    set -euo pipefail
+    workdir=\$(mktemp -d)
+
+    # sample.vcf - the tumor's lumpy SV calls. Required.
+    if [ ! -s tumor_lumpy/lumpy_sv.vcf ]; then
+        echo "ERROR: required file missing: tumor lumpy SV vcf (tumor_lumpy/lumpy_sv.vcf)" >&2
+        exit 1
+    fi
+    cp tumor_lumpy/lumpy_sv.vcf \$workdir/sample.vcf
+
+    # background.vcf - the normal's lumpy SV calls. Optional.
+    if [ -s normal_lumpy/lumpy_sv.vcf ]; then
+        cp normal_lumpy/lumpy_sv.vcf \$workdir/background.vcf
+    fi
+
+    # snv.vcf - caveman's id'd somatic SNVs, ungzipped. Optional.
+    if [ -s "${caveman_vcf_gz}" ]; then
+        gunzip -c "${caveman_vcf_gz}" > \$workdir/snv.vcf
+    fi
+
+    # coverage.bedGraph - from the COVERAGE step above. Optional.
+    if [ -s ${coverage_bg} ]; then
+        cp ${coverage_bg} \$workdir/coverage.bedGraph
+    fi
+
+    # baf.bedGraph - from ASCAT's per-tumor BAF bigwig. Optional.
+    baf_bw="${ascat_dir}/${tumor_meta.id}.copynumber.baf.bw"
+    if [ -s "\$baf_bw" ]; then
+        bigWigToBedGraph "\$baf_bw" \$workdir/baf.bedGraph
+    fi
+
+    tar -czf ${archive_name} -C \$workdir .
+    rm -rf \$workdir
     """
 }

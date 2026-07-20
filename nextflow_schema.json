@@ -60,6 +60,11 @@
       "default": "/home/projects/aafek/golann/.conda/envs/ampsuite",
       "hidden": true
     },
+    "bw_env": {
+      "type": "string",
+      "default": "/home/projects/aafek/golann/.conda/envs/bw",
+      "hidden": true
+    },
     "ascat_gc_correction": {
       "type": "string",
       "default": "~/CNV_SV_ref_GRCh38_hla_decoy_ebv_brass6+/ascat/SnpGcCorrections.tsv",
@@ -74,6 +79,21 @@
       "type": "string",
       "default": "~/Mills_and_1000G_gold_standard.indels.hg38.vcf.gz",
       "hidden": true
+    },
+    "ascat_purity": {
+      "type": "number",
+      "description": "Optional ASCAT purity override, passed to ascat.pl as -pu. Only applied when ascat_ploidy is also set.",
+      "hidden": true
+    },
+    "ascat_ploidy": {
+      "type": "number",
+      "description": "Optional ASCAT ploidy override, passed to ascat.pl as -pi. Only applied when ascat_purity is also set.",
+      "hidden": true
+    },
+    "follow_ascat_caveman_flow": {
+      "type": "boolean",
+      "default": true,
+      "description": "Feed ASCAT's copy-number output into CaVEMan (-tc/-nc/-k) instead of the flat -td 5 -nd 2 defaults. Automatically falls back to -td/-nd for a pair if ASCAT's per-sample outputs are missing or unusable, even when true."
     }
   }
 }
