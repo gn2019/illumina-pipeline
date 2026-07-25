@@ -74,10 +74,29 @@ workflow {
     // 8. Single-Sample Analyses (Parallel execution for all inputs via mix)
     ch_all_samples = ch_tumor_samples.mix(ch_normal_sample)
 
-    ch_lumpy = RUN_LUMPY(ch_all_samples, PREPARE_BEDS.out.exclude_bed.collect())
-    RUN_STATS(ch_all_samples)
-    RUN_AMPLICONARCHITECT(ch_tumor_samples)
-    ch_coverage = COVERAGE(ch_tumor_samples.map { meta, bam, bai -> meta })
+    // CAVEMAN_SETUP always needs real tumor/normal cn.bed paths to symlink,
+    // even when ASCAT is skipped and it's just falling back to -td/-nd - an
+    // empty placeholder file stands in for those.
+    def empty_cn_bed = file("${workflow.workDir}/.empty_cn.bed")
+    if (!empty_cn_bed.exists()) { empty_cn_bed.text = '' }
+
+    if (!params.skip_lumpy) {
+        ch_lumpy = RUN_LUMPY(ch_all_samples, PREPARE_BEDS.out.exclude_bed.collect())
+        ch_tumor_lumpy_dir  = ch_lumpy.lumpy_out.filter { meta, dir -> meta.type == 'tumor' }.map { meta, dir -> [ meta.id, dir ] }
+        ch_normal_lumpy_dir = ch_lumpy.lumpy_out.filter { meta, dir -> meta.type == 'normal' }.map { meta, dir -> dir }.collect()
+    } else {
+        log.info "Skipping RUN_LUMPY (params.skip_lumpy = true) - ARCHIVE will also be skipped, since it needs sample.vcf"
+    }
+
+    if (!params.skip_stats)             { RUN_STATS(ch_all_samples) }
+    if (!params.skip_ampliconarchitect) { RUN_AMPLICONARCHITECT(ch_tumor_samples) }
+
+    if (!params.skip_coverage) {
+        ch_coverage = COVERAGE(ch_tumor_samples.map { meta, bam, bai -> meta })
+        ch_coverage_bg = ch_coverage.coverage.map { meta, bg -> [ meta.id, bg ] }
+    } else {
+        log.info "Skipping COVERAGE (params.skip_coverage = true) - ARCHIVE will also be skipped"
+    }
 
     // 9. Somatic Paired Analyses
     ch_paired_somatic = ch_tumor_samples.combine(ch_normal_sample)
@@ -89,34 +108,45 @@ workflow {
     ch_scattered_somatic = ch_paired_somatic.combine(chunk_beds_ch)
 
     // --- RUN SCATTERED TOOLS ---
-    RUN_GATK(ch_scattered_somatic)
+    if (!params.skip_gatk) {
+        RUN_GATK(ch_scattered_somatic)
 
-    // --- GATHER RESULTS ---
-    // merge GATK results
-    gatk_per_sample_ch = RUN_GATK.out.groupTuple(by: 0)
-    MERGE_GATK_VCFS(gatk_per_sample_ch)
+        // --- GATHER RESULTS ---
+        // merge GATK results
+        gatk_per_sample_ch = RUN_GATK.out.groupTuple(by: 0)
+        MERGE_GATK_VCFS(gatk_per_sample_ch)
+    } else {
+        log.info "Skipping RUN_GATK/MERGE_GATK_VCFS (params.skip_gatk = true)"
+    }
 
-    // ASCAT now has to run BEFORE CaVEMan: CaVEMan's copy-number input
+    // ASCAT normally has to run BEFORE CaVEMan: CaVEMan's copy-number input
     // (-tc/-nc) and normal contamination (-k) are derived directly from
     // ASCAT's per-tumor copynumber.caveman.csv and samplestatistics.txt.
-    RUN_ASCAT(ch_paired_somatic, DOWNLOAD_REFS.out.ascat_gc_correction.collect())
-    ASCAT_TO_CAVEMAN(RUN_ASCAT.out.ascat_out)
+    if (!params.skip_ascat) {
+        RUN_ASCAT(ch_paired_somatic, DOWNLOAD_REFS.out.ascat_gc_correction.collect())
+        ASCAT_TO_CAVEMAN(RUN_ASCAT.out.ascat_out)
 
-    // Build the caveman.pl copy-number flags ONCE per tumor/normal pair here,
-    // so every caveman.pl step downstream (setup, split, mstep, estep, ...)
-    // is invoked with identical, consistent flags. Default is to follow the
-    // ASCAT->CaVEMan flow (params.follow_ascat_caveman_flow = true); set it
-    // to false to always use the flat -td/-nd defaults instead. Even when
-    // set to follow, if ASCAT didn't produce usable cn.bed files or a normal
-    // contamination value for a sample, this still falls back to -td/-nd
-    // rather than failing the pair.
-    ch_cn_args = ASCAT_TO_CAVEMAN.out.cn_data.map { tumor_meta, normal_meta, tumor_cn_bed, normal_cn_bed, normal_contamination ->
-        def has_cn_data = params.follow_ascat_caveman_flow &&
-            tumor_cn_bed.size() > 0 && normal_cn_bed.size() > 0 && normal_contamination?.trim()
-        def cn_args = has_cn_data
-            ? "-tc tumor_cn.bed -nc normal_cn.bed -k ${normal_contamination.trim()}"
-            : "-td 5 -nd 2"
-        [ tumor_meta.id, tumor_meta, tumor_cn_bed, normal_cn_bed, cn_args ]
+        ch_ascat_dir = RUN_ASCAT.out.ascat_out.map { tumor_meta, normal_meta, dir -> [ tumor_meta.id, dir ] }
+
+        // Build the caveman.pl copy-number flags ONCE per tumor/normal pair
+        // here, so every caveman.pl step downstream (setup, split, mstep,
+        // estep, ...) is invoked with identical, consistent flags. Default
+        // is to follow the ASCAT->CaVEMan flow (params.follow_ascat_caveman_flow
+        // = true); set it to false to always use the flat -td/-nd defaults
+        // instead. Even when set to follow, if ASCAT didn't produce usable
+        // cn.bed files or a normal contamination value for a sample, this
+        // still falls back to -td/-nd rather than failing the pair.
+        ch_cn_args = ASCAT_TO_CAVEMAN.out.cn_data.map { tumor_meta, normal_meta, tumor_cn_bed, normal_cn_bed, normal_contamination ->
+            def has_cn_data = params.follow_ascat_caveman_flow &&
+                tumor_cn_bed.size() > 0 && normal_cn_bed.size() > 0 && normal_contamination?.trim()
+            def cn_args = has_cn_data
+                ? "-tc tumor_cn.bed -nc normal_cn.bed -k ${normal_contamination.trim()}"
+                : "-td 5 -nd 2"
+            [ tumor_meta.id, tumor_meta, tumor_cn_bed, normal_cn_bed, cn_args ]
+        }
+    } else {
+        log.info "Skipping RUN_ASCAT/ASCAT_TO_CAVEMAN (params.skip_ascat = true) - CAVEMAN will use -td 5 -nd 2, ARCHIVE will also be skipped"
+        ch_cn_args = ch_paired_somatic.map { tumor_meta, tumor_bam, tumor_bai, normal_meta, normal_bam, normal_bai -> [ tumor_meta.id, tumor_meta, empty_cn_bed, empty_cn_bed, "-td 5 -nd 2" ] }
     }
 
     // CAVEMAN is NOT BED-chunked here. caveman.pl does its own internal
@@ -124,50 +154,43 @@ workflow {
     // explicitly as one Nextflow/LSF task per split index (mirrors the
     // manual bsub job-array script) instead of letting a single caveman.pl
     // invocation loop over everything internally with -t.
-    ch_caveman_done = CAVEMAN(
-        ch_paired_somatic,
-        ch_genome_fa,
-        PREPARE_BEDS.out.filtered_fai.collect(),
-        DOWNLOAD_REFS.out.caveman_blacklist.collect(),
-        DOWNLOAD_REFS.out.caveman_indels.collect(),
-        DOWNLOAD_REFS.out.caveman_indels_tbi.collect(),
-        ch_cn_args
-    )
+    if (!params.skip_caveman) {
+        ch_caveman_done = CAVEMAN(
+            ch_paired_somatic,
+            ch_genome_fa,
+            PREPARE_BEDS.out.filtered_fai.collect(),
+            DOWNLOAD_REFS.out.caveman_blacklist.collect(),
+            DOWNLOAD_REFS.out.caveman_indels.collect(),
+            DOWNLOAD_REFS.out.caveman_indels_tbi.collect(),
+            ch_cn_args
+        )
+        ch_caveman_flag = ch_caveman_done.map { tumor_meta, flag -> [ tumor_meta.id, flag ] }
+    } else {
+        log.info "Skipping CAVEMAN (params.skip_caveman = true) - ARCHIVE will also be skipped"
+    }
 
     // --- FINAL VISUALIZATION ARCHIVE ---
     // There's exactly one normal sample for the whole run (params.normal),
     // so it's referenced by id directly below rather than carried through
-    // every channel as its own value.
-    ch_tumor_lumpy_dir = ch_lumpy.lumpy_out
-        .filter { meta, dir -> meta.type == 'tumor' }
-        .map { meta, dir -> [ meta.id, dir ] }
+    // every channel as its own value. If any of lumpy/coverage/ascat/caveman
+    // was skipped, ARCHIVE is skipped too - it isn't worth trying to
+    // patch together a partial archive from steps that didn't run.
+    if (!params.skip_archive && !params.skip_lumpy && !params.skip_coverage && !params.skip_ascat && !params.skip_caveman) {
+        ch_archive_in = ch_paired_somatic
+            .map { tumor_meta, tumor_bam, tumor_bai, normal_meta, normal_bam, normal_bai -> [ tumor_meta.id, tumor_meta ] }
+            .join(ch_tumor_lumpy_dir)
+            .join(ch_coverage_bg)
+            .join(ch_ascat_dir)
+            .join(ch_caveman_flag)
+            .combine(ch_normal_lumpy_dir)
+            .map { id, tumor_meta, tumor_lumpy_dir, coverage_bg, ascat_dir, caveman_flag, normal_lumpy_dir ->
+                [ tumor_meta, tumor_lumpy_dir, normal_lumpy_dir, coverage_bg, ascat_dir, caveman_flag ]
+            }
 
-    ch_normal_lumpy_dir = ch_lumpy.lumpy_out
-        .filter { meta, dir -> meta.type == 'normal' }
-        .map { meta, dir -> dir }
-        .collect()
-
-    ch_coverage_bg = ch_coverage.coverage
-        .map { meta, bg -> [ meta.id, bg ] }
-
-    ch_ascat_dir = RUN_ASCAT.out.ascat_out
-        .map { tumor_meta, normal_meta, dir -> [ tumor_meta.id, dir ] }
-
-    ch_caveman_flag = ch_caveman_done
-        .map { tumor_meta, flag -> [ tumor_meta.id, flag ] }
-
-    ch_archive_in = ch_paired_somatic
-        .map { tumor_meta, tumor_bam, tumor_bai, normal_meta, normal_bam, normal_bai -> [ tumor_meta.id, tumor_meta ] }
-        .join(ch_tumor_lumpy_dir)
-        .join(ch_coverage_bg)
-        .join(ch_ascat_dir)
-        .join(ch_caveman_flag)
-        .combine(ch_normal_lumpy_dir)
-        .map { id, tumor_meta, tumor_lumpy_dir, coverage_bg, ascat_dir, caveman_flag, normal_lumpy_dir ->
-            [ tumor_meta, tumor_lumpy_dir, normal_lumpy_dir, coverage_bg, ascat_dir, caveman_flag ]
-        }
-
-    ARCHIVE(ch_archive_in)
+        ARCHIVE(ch_archive_in)
+    } else {
+        log.info "Skipping ARCHIVE (params.skip_archive = true, or a step it depends on was skipped)"
+    }
 }
 
 // ==========================================

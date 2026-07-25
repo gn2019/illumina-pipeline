@@ -94,6 +94,46 @@
       "type": "boolean",
       "default": true,
       "description": "Feed ASCAT's copy-number output into CaVEMan (-tc/-nc/-k) instead of the flat -td 5 -nd 2 defaults. Automatically falls back to -td/-nd for a pair if ASCAT's per-sample outputs are missing or unusable, even when true."
+    },
+    "skip_lumpy": {
+      "type": "boolean",
+      "default": false,
+      "description": "Skip RUN_LUMPY entirely. ARCHIVE will also be skipped, since it needs sample.vcf."
+    },
+    "skip_stats": {
+      "type": "boolean",
+      "default": false,
+      "description": "Skip RUN_STATS entirely."
+    },
+    "skip_ampliconarchitect": {
+      "type": "boolean",
+      "default": false,
+      "description": "Skip RUN_AMPLICONARCHITECT entirely."
+    },
+    "skip_coverage": {
+      "type": "boolean",
+      "default": false,
+      "description": "Skip the COVERAGE step entirely. ARCHIVE will also be skipped."
+    },
+    "skip_gatk": {
+      "type": "boolean",
+      "default": false,
+      "description": "Skip RUN_GATK/MERGE_GATK_VCFS entirely."
+    },
+    "skip_ascat": {
+      "type": "boolean",
+      "default": false,
+      "description": "Skip RUN_ASCAT/ASCAT_TO_CAVEMAN entirely. CAVEMAN falls back to -td 5 -nd 2; ARCHIVE will also be skipped."
+    },
+    "skip_caveman": {
+      "type": "boolean",
+      "default": false,
+      "description": "Skip the CAVEMAN subworkflow entirely. ARCHIVE will also be skipped."
+    },
+    "skip_archive": {
+      "type": "boolean",
+      "default": false,
+      "description": "Skip the final ARCHIVE step entirely. Also skipped automatically if skip_lumpy, skip_coverage, skip_ascat, or skip_caveman is set."
     }
   }
 }
