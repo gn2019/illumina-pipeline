@@ -92,10 +92,10 @@ workflow {
     if (!params.skip_ampliconarchitect) { RUN_AMPLICONARCHITECT(ch_tumor_samples) }
 
     if (!params.skip_coverage) {
-        ch_coverage = COVERAGE(ch_tumor_samples.map { meta, bam, bai -> meta })
-        ch_coverage_bg = ch_coverage.coverage.map { meta, bg -> [ meta.id, bg ] }
+        ch_bamcoverage = RUN_BAMCOVERAGE(ch_tumor_samples)
+        ch_coverage_bg = ch_bamcoverage.coverage.map { meta, bw -> [ meta.id, bw ] }
     } else {
-        log.info "Skipping COVERAGE (params.skip_coverage = true) - ARCHIVE will also be skipped"
+        log.info "Skipping RUN_BAMCOVERAGE (params.skip_coverage = true) - ARCHIVE will also be skipped"
     }
 
     // 9. Somatic Paired Analyses
@@ -330,28 +330,20 @@ process RUN_LUMPY {
     """
 }
 
-// Locates the per-lane *_sorted.dedup.bw coverage tracks for a tumor sample
-// (they're written into the fastq directory tree by preprocess.sh, next to
-// the source fastqs, not into the Nextflow work dir) and merges them into a
-// single sorted bedGraph.
-process COVERAGE {
-    tag "${tumor_meta.id}_coverage"
-    conda "${params.bw_env}"
+process RUN_BAMCOVERAGE {
+    tag "${tumor_meta.id}_bamcoverage"
     publishDir "${params.results}/${tumor_meta.id}/coverage", mode: 'copy'
 
     input:
-    val tumor_meta
+    tuple val(tumor_meta), path(bam), path(bai)
 
     output:
-    tuple val(tumor_meta), path("coverage.sorted.bedGraph"), emit: coverage
+    tuple val(tumor_meta), path("${tumor_meta.id}.bw"), emit: coverage
 
     script:
     """
-    find "${params.results}/${tumor_meta.id}" -type f -name "*_sorted.dedup.bw" | sort > bw_list.txt
-
-    bigWigMerge -inList bw_list.txt coverage.bedGraph
-
-    sort -k1,1 -k2,2n coverage.bedGraph > coverage.sorted.bedGraph
+    module load deepTools
+    bamCoverage --bam ${bam} -o ${tumor_meta.id}.bw
     """
 }
 
@@ -896,9 +888,9 @@ process ARCHIVE {
         gunzip -c "${caveman_vcf_gz}" > \$workdir/snv.vcf
     fi
 
-    # coverage.bedGraph - from the COVERAGE step above. Optional.
+    # coverage.bedGraph - from the RUN_BAMCOVERAGE step above. Optional.
     if [ -s ${coverage_bg} ]; then
-        cp ${coverage_bg} \$workdir/coverage.bedGraph
+        bigWigToBedGraph ${coverage_bg} \$workdir/coverage.bedGraph
     fi
 
     # baf.bedGraph - from ASCAT's per-tumor BAF bigwig. Optional.
