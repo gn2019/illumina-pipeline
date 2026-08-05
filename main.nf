@@ -291,7 +291,6 @@ process PREPARE_BEDS {
     """
 }
 
-// --- NEW SCATTER PROCESS ---
 process SPLIT_BED_INTO_CHUNKS {
     tag "split_bed"
 
@@ -365,6 +364,23 @@ process RUN_STATS {
     """
 }
 
+process RUN_AMPLICONARCHITECT {
+    tag "${meta.id}"
+    conda "${params.ampsuite_env}"
+    publishDir "${params.results}/${meta.id}/AmpliconSuite", mode: 'copy'
+
+    input:
+    tuple val(meta), path(bam), path(bai)
+
+    output:
+    path "*"
+
+    script:
+    """
+    AmpliconSuite-pipeline.py -s ${meta.id} -t 16 --bam ${bam} --run_AA --run_AC 2>&1
+    """
+}
+
 process RUN_GATK {
     tag "${tumor_meta.id}_vs_${normal_meta.id}_${chunk_bed.baseName}"
 
@@ -386,6 +402,91 @@ process RUN_GATK {
         --native-pair-hmm-threads 8 \\
         --pair-hmm-implementation LOGLESS_CACHING \\
         -O "gatk-${tumor_meta.id}-${chunk_bed.baseName}.vcf" 2>&1
+    """
+}
+
+process MERGE_GATK_VCFS {
+    tag "${tumor_meta.id}"
+    publishDir "${params.results}/${tumor_meta.id}", mode: 'copy'
+
+    input:
+    tuple val(tumor_meta), path(vcf_list)
+
+    output:
+    path "gatk/${tumor_meta.id}_merged.vcf"
+
+    script:
+    def input_list = vcf_list.collect { "-I ${it}" }.join(' ')
+    """
+    module load GATK
+    mkdir -p gatk
+    gatk MergeVcfs ${input_list} -O "gatk/${tumor_meta.id}_merged.vcf"
+    """
+}
+
+process RUN_ASCAT {
+    tag "${tumor_meta.id}_vs_${normal_meta.id}"
+    container "${params.cgpwgs_sif}"
+    publishDir "${params.results}/${tumor_meta.id}", mode: 'copy'
+
+    input:
+    tuple val(tumor_meta), path(tumor_bam), path(tumor_bai), val(normal_meta), path(normal_bam), path(normal_bai)
+    path ascat_gc_correction
+
+    output:
+    tuple val(tumor_meta), val(normal_meta), path("ascat"), emit: ascat_out
+
+    script:
+    // -pu/-pi are only passed when BOTH ascat_purity and ascat_ploidy are
+    // set - otherwise ascat.pl estimates them itself.
+    def purity_ploidy_args = (params.ascat_purity && params.ascat_ploidy) ? "-pu ${params.ascat_purity} -pi ${params.ascat_ploidy}" : ''
+    """
+    mkdir -p ascat
+    ascat.pl -o ascat \\
+        -t ${tumor_bam} \\
+        -n ${normal_bam} \\
+        -r ${params.genome} -pr WGS -g XY -gc chrY \\
+        -rs ${params.species} \\
+        -ra ${params.assembly} \\
+        -sg ${ascat_gc_correction} -c 8 ${purity_ploidy_args} 2>&1
+    """
+}
+
+// ASCAT's per-tumour copynumber.caveman.csv already carries both the tumour
+// and normal copy-number segments (columns: chr,start,stop,normal_total_cn,
+// normal_minor_cn,tumour_total_cn,tumour_minor_cn - 1-indexed after
+// splitting on comma), and its samplestatistics.txt carries the normal
+// contamination fraction CaVEMan expects via -k. This process turns those
+// into the two BED files + contamination value CaVEMan needs.
+process ASCAT_TO_CAVEMAN {
+    tag "${tumor_meta.id}_ascat2caveman"
+    container "${params.cgpwgs_sif}"
+    cpus 1
+    memory '1 GB'
+
+    input:
+    tuple val(tumor_meta), val(normal_meta), path(ascat_dir)
+
+    output:
+    tuple val(tumor_meta), val(normal_meta), path("${tumor_meta.id}.cn.bed"), path("${normal_meta.id}.cn.bed"), env(NORMAL_CONTAMINATION), emit: cn_data
+
+    script:
+    """
+    set +e
+
+    perl -ne '@F=(split q{,}, \$_)[1,2,3,6]; \$F[1]--; print join("\\t",@F)."\\n";' \\
+        < ${ascat_dir}/${tumor_meta.id}.copynumber.caveman.csv > ${tumor_meta.id}.cn.bed
+
+    perl -ne '@F=(split q{,}, \$_)[1,2,3,4]; \$F[1]--; print join("\\t",@F)."\\n";' \\
+        < ${ascat_dir}/${tumor_meta.id}.copynumber.caveman.csv > ${normal_meta.id}.cn.bed
+
+    NORMAL_CONTAMINATION=\$(awk '(\$1=="NormalContamination") {print \$2}' ${ascat_dir}/${tumor_meta.id}.samplestatistics.txt)
+
+    # if ASCAT's outputs weren't there or were malformed, still land empty
+    # files/an empty value here rather than failing the pair - ch_cn_args
+    # in the main workflow falls back to flat -td/-nd when this happens.
+    touch ${tumor_meta.id}.cn.bed ${normal_meta.id}.cn.bed
+    true
     """
 }
 
@@ -740,110 +841,6 @@ process CAVEMAN_ADD_IDS {
 
     echo "done" > ${outdir}/caveman_done.flag
     ln -fs ${outdir}/caveman_done.flag \$ORIG_DIR/caveman_done.flag
-    """
-}
-
-
-// --- NEW GATHER PROCESSES ---
-process MERGE_GATK_VCFS {
-    tag "${tumor_meta.id}"
-    publishDir "${params.results}/${tumor_meta.id}", mode: 'copy'
-
-    input:
-    tuple val(tumor_meta), path(vcf_list)
-
-    output:
-    path "gatk/${tumor_meta.id}_merged.vcf"
-
-    script:
-    def input_list = vcf_list.collect { "-I ${it}" }.join(' ')
-    """
-    module load GATK
-    mkdir -p gatk
-    gatk MergeVcfs ${input_list} -O "gatk/${tumor_meta.id}_merged.vcf"
-    """
-}
-
-process RUN_ASCAT {
-    tag "${tumor_meta.id}_vs_${normal_meta.id}"
-    container "${params.cgpwgs_sif}"
-    publishDir "${params.results}/${tumor_meta.id}", mode: 'copy'
-
-    input:
-    tuple val(tumor_meta), path(tumor_bam), path(tumor_bai), val(normal_meta), path(normal_bam), path(normal_bai)
-    path ascat_gc_correction
-
-    output:
-    tuple val(tumor_meta), val(normal_meta), path("ascat"), emit: ascat_out
-
-    script:
-    // -pu/-pi are only passed when BOTH ascat_purity and ascat_ploidy are
-    // set - otherwise ascat.pl estimates them itself.
-    def purity_ploidy_args = (params.ascat_purity && params.ascat_ploidy) ? "-pu ${params.ascat_purity} -pi ${params.ascat_ploidy}" : ''
-    """
-    mkdir -p ascat
-    ascat.pl -o ascat \\
-        -t ${tumor_bam} \\
-        -n ${normal_bam} \\
-        -r ${params.genome} -pr WGS -g XY -gc chrY \\
-        -rs ${params.species} \\
-        -ra ${params.assembly} \\
-        -sg ${ascat_gc_correction} -c 8 ${purity_ploidy_args} 2>&1
-    """
-}
-
-// ASCAT's per-tumour copynumber.caveman.csv already carries both the tumour
-// and normal copy-number segments (columns: chr,start,stop,normal_total_cn,
-// normal_minor_cn,tumour_total_cn,tumour_minor_cn - 1-indexed after
-// splitting on comma), and its samplestatistics.txt carries the normal
-// contamination fraction CaVEMan expects via -k. This process turns those
-// into the two BED files + contamination value CaVEMan needs.
-process ASCAT_TO_CAVEMAN {
-    tag "${tumor_meta.id}_ascat2caveman"
-    container "${params.cgpwgs_sif}"
-    cpus 1
-    memory '1 GB'
-
-    input:
-    tuple val(tumor_meta), val(normal_meta), path(ascat_dir)
-
-    output:
-    tuple val(tumor_meta), val(normal_meta), path("${tumor_meta.id}.cn.bed"), path("${normal_meta.id}.cn.bed"), env(NORMAL_CONTAMINATION), emit: cn_data
-
-    script:
-    """
-    set +e
-
-    perl -ne '@F=(split q{,}, \$_)[1,2,3,6]; \$F[1]--; print join("\\t",@F)."\\n";' \\
-        < ${ascat_dir}/${tumor_meta.id}.copynumber.caveman.csv > ${tumor_meta.id}.cn.bed
-
-    perl -ne '@F=(split q{,}, \$_)[1,2,3,4]; \$F[1]--; print join("\\t",@F)."\\n";' \\
-        < ${ascat_dir}/${tumor_meta.id}.copynumber.caveman.csv > ${normal_meta.id}.cn.bed
-
-    NORMAL_CONTAMINATION=\$(awk '(\$1=="NormalContamination") {print \$2}' ${ascat_dir}/${tumor_meta.id}.samplestatistics.txt)
-
-    # if ASCAT's outputs weren't there or were malformed, still land empty
-    # files/an empty value here rather than failing the pair - ch_cn_args
-    # in the main workflow falls back to flat -td/-nd when this happens.
-    touch ${tumor_meta.id}.cn.bed ${normal_meta.id}.cn.bed
-    true
-    """
-}
-
-process RUN_AMPLICONARCHITECT {
-    tag "${meta.id}"
-    conda "${params.ampsuite_env}"
-    publishDir "${params.results}/${meta.id}/AmpliconSuite", mode: 'copy'
-
-    input:
-    tuple val(meta), path(bam), path(bai)
-
-    output:
-    path "*"
-
-    script:
-    """
-    AmpliconSuite-pipeline.py -s ${meta.id} -t 16 --bam ${bam} --run_AA --run_AC 2>&1
     """
 }
 
