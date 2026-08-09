@@ -891,7 +891,7 @@ process ARCHIVE {
     fi
 
     # baf.bedGraph - from ASCAT's per-tumor BAF bigwig. Optional.
-    baf_bw="${ascat_dir}/${tumor_meta.id}.copynumber.baf.bw"
+    baf_bw="${ascat_dir}/${tumor_meta.id}.copynumber.segBaf.bw"
     if [ -s "\$baf_bw" ]; then
         bigWigToBedGraph "\$baf_bw" \$workdir/baf.bedGraph
     fi
