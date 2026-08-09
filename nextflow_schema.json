@@ -15,27 +15,23 @@
     },
     "base": {
       "type": "string",
-      "default": "/home/projects/aafek/golann/shoshani"
+      "default": "~/illumina-pipeline"
     },
     "results": {
       "type": "string",
-      "default": "/home/projects/aafek/golann/shoshani/ShareScripts/wgs/results"
+      "default": "~/illumina-pipeline/results"
     },
     "scripts": {
       "type": "string",
-      "default": "/home/projects/aafek/golann/shoshani/ShareScripts/wgs"
-    },
-    "annotate": {
-      "type": "string",
-      "default": "/home/projects/aafek/golann/shoshani/ShareScripts/wgs/annotate"
+      "default": "~/illumina-pipeline/scripts"
     },
     "fastq_dir": {
       "type": "string",
-      "default": "/home/projects/aafek/golann/shoshani/ShareScripts/wgs/data/fastq"
+      "default": "~/illumina-pipeline/data/fastq"
     },
     "genome": {
       "type": "string",
-      "default": "/home/projects/aafek/golann/shoshani/GRCh38.p7.genome.fa"
+      "default": "~/illumina-pipeline/data/genome/hg38/GRCh38.p7.genome.fa"
     },
     "species": {
       "type": "string",
@@ -47,37 +43,37 @@
     },
     "cgpwgs_sif": {
       "type": "string",
-      "default": "/home/projects/aafek/golann/cgpwgs.sif",
+      "default": "~/illumina-pipeline/cgpwgs.sif",
       "hidden": true
     },
     "lumpy_env": {
       "type": "string",
-      "default": "/home/projects/aafek/golann/.conda/envs/lumpy-sv",
+      "default": "~/.conda/envs/lumpy-sv",
       "hidden": true
     },
     "ampsuite_env": {
       "type": "string",
-      "default": "/home/projects/aafek/golann/.conda/envs/ampsuite",
+      "default": "~/.conda/envs/ampsuite",
       "hidden": true
     },
     "bw_env": {
       "type": "string",
-      "default": "/home/projects/aafek/golann/.conda/envs/bw",
+      "default": "~/.conda/envs/bw",
       "hidden": true
     },
     "ascat_gc_correction": {
       "type": "string",
-      "default": "~/CNV_SV_ref_GRCh38_hla_decoy_ebv_brass6+/ascat/SnpGcCorrections.tsv",
+      "default": "~/illumina-pipeline/refs/hg38/CNV_SV_ref_GRCh38_hla_decoy_ebv_brass6+/ascat/SnpGcCorrections.tsv",
       "hidden": true
     },
     "caveman_blacklist": {
       "type": "string",
-      "default": "~/hg38-blacklist.v2.bed",
+      "default": "~/illumina-pipeline/refs/hg38/hg38-blacklist.v2.bed",
       "hidden": true
     },
     "caveman_indels": {
       "type": "string",
-      "default": "~/Mills_and_1000G_gold_standard.indels.hg38.vcf.gz",
+      "default": "~/illumina-pipeline/refs/hg38/Mills_and_1000G_gold_standard.indels.hg38.vcf.gz",
       "hidden": true
     },
     "ascat_purity": {
