@@ -210,6 +210,7 @@ process PREPROCESS {
 
     script:
     """
+    module load BWA SAMtools FastQC TrimGalore picard
     bash ${params.scripts}/preprocess.sh ${meta.id} noERX ${reads[0]} ${reads[1]} ${params.genome} 2>&1
     """
 }
