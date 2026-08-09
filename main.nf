@@ -226,7 +226,7 @@ process DOWNLOAD_REFS {
     """
     module load BEDTools
 
-    bash ${params.scripts}/download_refs.sh hg38
+    bash ${params.scripts}/download_refs.sh ${params.refs}/hg38
 
     ln -fs ${params.caveman_blacklist} caveman_blacklist.bed
     ln -fs ${params.caveman_indels} caveman_indels.vcf.gz
