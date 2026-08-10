@@ -15,7 +15,7 @@
     },
     "base": {
       "type": "string",
-      "default": "${HOME}/illumina-pipeline"
+      "default": "$HOME/illumina-pipeline"
     },
     "results": {
       "type": "string",
@@ -48,17 +48,17 @@
     },
     "lumpy_env": {
       "type": "string",
-      "default": "${HOME}/.conda/envs/lumpy-sv",
+      "default": "$HOME/.conda/envs/lumpy-sv",
       "hidden": true
     },
     "ampsuite_env": {
       "type": "string",
-      "default": "${HOME}/.conda/envs/ampsuite",
+      "default": "$HOME/.conda/envs/ampsuite",
       "hidden": true
     },
     "bw_env": {
       "type": "string",
-      "default": "${HOME}/.conda/envs/bw",
+      "default": "$HOME/.conda/envs/bw",
       "hidden": true
     },
     "ascat_gc_correction": {
