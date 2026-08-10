@@ -38,7 +38,7 @@ workflow {
         // Fetch FASTQs only for the samples that actually need them
         ch_fastqs = Channel.fromFilePairs("${params.fastq_dir}/*{${missing_ids.join(',')}}/*{1,2}.{fastq,fastq.gz}", checkIfExists: true)
             .map { name, reads ->
-                def sample_id = missing_ids.find { name.contains(it) }
+                def sample_id = reads[0].getParent().getName()
                 def meta = missing_samples.find { m, b, bi -> m.id == sample_id }[0]
                 return [ meta, reads ]
             }
