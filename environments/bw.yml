@@ -1,0 +1,21 @@
+name: bw
+channels:
+  - bioconda
+  - conda-forge
+  - https://repo.anaconda.com/pkgs/main
+  - https://repo.anaconda.com/pkgs/r
+dependencies:
+  - _openmp_mutex=4.5=20_gnu
+  - ca-certificates=2026.6.17=hbd8a1cb_0
+  - libgcc=15.2.0=he0feb66_18
+  - libgcc-ng=15.2.0=h69a702a_18
+  - libgomp=15.2.0=he0feb66_18
+  - libpng=1.6.43=h2797004_0
+  - libuuid=2.41.3=h5347b49_0
+  - libzlib=1.2.13=h4ab18f5_6
+  - mysql-connector-c=6.1.6=2
+  - openssl=1.0.2u=h516909a_0
+  - ucsc-bigwiginfo=377=h199ee4e_0
+  - ucsc-bigwigmerge=377=h199ee4e_0
+  - ucsc-bigwigtobedgraph=377=h199ee4e_0
+  - zlib=1.2.13=h4ab18f5_6
