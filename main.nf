@@ -262,6 +262,7 @@ process MERGE_BAMS {
 
     script:
     """
+    module load SAMtools
     bash ${params.scripts}/merge.sh ${meta.id} ${bams_list} 2>&1
     """
 }
