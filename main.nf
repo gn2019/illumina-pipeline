@@ -315,6 +315,7 @@ process SPLIT_BED_INTO_CHUNKS {
 
 process RUN_LUMPY {
     tag "${meta.id}_${meta.type}"
+    beforeScript "module load miniconda"
     conda "${params.lumpy_env}"
     publishDir "${params.results}/${meta.id}", mode: 'copy'
 
@@ -350,6 +351,7 @@ process RUN_BAMCOVERAGE {
 
 process RUN_STATS {
     tag "${meta.id}_${meta.type}"
+    beforeScript "module load miniconda"
     conda "${params.lumpy_env}"
     publishDir "${params.results}/${meta.id}", mode: 'copy'
 
@@ -368,6 +370,7 @@ process RUN_STATS {
 
 process RUN_AMPLICONARCHITECT {
     tag "${meta.id}"
+    beforeScript "module load miniconda"
     conda "${params.ampsuite_env}"
     publishDir "${params.results}/${meta.id}/AmpliconSuite", mode: 'copy'
 
@@ -854,6 +857,7 @@ process CAVEMAN_ADD_IDS {
 // as a formal Nextflow input, since it's one of several optional members.
 process ARCHIVE {
     tag "${tumor_meta.id}_vs_${params.normal}_archive"
+    beforeScript "module load miniconda"
     conda "${params.bw_env}"
     publishDir "${params.results}/${tumor_meta.id}", mode: 'copy'
 
