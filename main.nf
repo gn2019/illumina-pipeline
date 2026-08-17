@@ -382,6 +382,11 @@ process RUN_AMPLICONARCHITECT {
 
     script:
     """
+    export AA_DATA_REPO=${params.ampsuite_data_repo}
+    mkdir -p $AA_DATA_REPO
+    wget https://raw.githubusercontent.com/AmpliconSuite/AmpliconSuite-pipeline/master/install.sh && bash install.sh --finalize_only
+    rm -f install.sh
+    AmpliconSuite-pipeline.py --download_repo ${params.assembly}
     AmpliconSuite-pipeline.py -s ${meta.id} -t 16 --bam ${bam} --run_AA --run_AC 2>&1
     """
 }

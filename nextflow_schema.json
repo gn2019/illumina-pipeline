@@ -76,6 +76,11 @@
       "default": "${params.refs}/hg38/Mills_and_1000G_gold_standard.indels.hg38.vcf.gz",
       "hidden": true
     },
+    "ampsuite_data_repo": {
+      "type": "string",
+      "default": "${params.refs}/data_repo",
+      "hidden": true
+    },
     "ascat_purity": {
       "type": "number",
       "description": "Optional ASCAT purity override, passed to ascat.pl as -pu. Only applied when ascat_ploidy is also set.",
