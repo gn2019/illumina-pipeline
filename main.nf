@@ -226,7 +226,7 @@ process DOWNLOAD_REFS {
     """
     module load BEDTools
 
-    bash ${params.scripts}/download_refs.sh ${params.refs}/hg38
+    bash ${params.scripts}/download_refs.sh ${params.refs}/hg38 2>&1
 
     ln -fs ${params.caveman_blacklist} caveman_blacklist.bed
     ln -fs ${params.caveman_indels} caveman_indels.vcf.gz
@@ -345,7 +345,7 @@ process RUN_BAMCOVERAGE {
     script:
     """
     module load deepTools
-    bamCoverage --bam ${bam} -o ${tumor_meta.id}.bw
+    bamCoverage --bam ${bam} -o ${tumor_meta.id}.bw 2>&1
     """
 }
 
@@ -384,9 +384,9 @@ process RUN_AMPLICONARCHITECT {
     """
     export AA_DATA_REPO=${params.ampsuite_data_repo}
     mkdir -p $AA_DATA_REPO
-    wget https://raw.githubusercontent.com/AmpliconSuite/AmpliconSuite-pipeline/master/install.sh && bash install.sh --finalize_only
+    wget https://raw.githubusercontent.com/AmpliconSuite/AmpliconSuite-pipeline/master/install.sh 2>&1 && bash install.sh --finalize_only 2>&1
     rm -f install.sh
-    AmpliconSuite-pipeline.py --download_repo ${params.assembly}
+    AmpliconSuite-pipeline.py --download_repo ${params.assembly} 2>&1
     AmpliconSuite-pipeline.py -s ${meta.id} -t 16 --bam ${bam} --run_AA --run_AC 2>&1
     """
 }
@@ -430,7 +430,7 @@ process MERGE_GATK_VCFS {
     """
     module load GATK
     mkdir -p gatk
-    gatk MergeVcfs ${input_list} -O "gatk/${tumor_meta.id}_merged.vcf"
+    gatk MergeVcfs ${input_list} -O "gatk/${tumor_meta.id}_merged.vcf" 2>&1
     """
 }
 
@@ -898,13 +898,13 @@ process ARCHIVE {
 
     # coverage.bedGraph - from the RUN_BAMCOVERAGE step above. Optional.
     if [ -s ${coverage_bg} ]; then
-        bigWigToBedGraph ${coverage_bg} \$workdir/coverage.bedGraph
+        bigWigToBedGraph ${coverage_bg} \$workdir/coverage.bedGraph 2>&1
     fi
 
     # baf.bedGraph - from ASCAT's per-tumor BAF bigwig. Optional.
     baf_bw="${ascat_dir}/${tumor_meta.id}.copynumber.segBaf.bw"
     if [ -s "\$baf_bw" ]; then
-        bigWigToBedGraph "\$baf_bw" \$workdir/baf.bedGraph
+        bigWigToBedGraph "\$baf_bw" \$workdir/baf.bedGraph 2>&1
     fi
 
     tar -czf ${archive_name} -C \$workdir .
