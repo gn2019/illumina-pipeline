@@ -13,6 +13,25 @@ set -euo pipefail
 ENV_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONDA_ENVS="${HOME}/.conda/envs"
 
+# WEXAC's default `mamba`/`conda` module has a solver old enough to report
+# false "nothing provides X" errors for packages that are perfectly real
+# (mscorefonts, pomegranate, biopython all hit this) - load the modern one.
+module load miniconda/26.1.1_environmentally
+
+# One-time-per-account, safe to run every time (no-op once accepted):
+# accepts Anaconda's Terms of Service for the `defaults` channels
+# (repo.anaconda.com/pkgs/main and /pkgs/r). WEXAC's conda module ships
+# with these channels pre-configured as "active" for every account, so
+# `conda env create` checks their ToS on every run regardless of what
+# channels a given environment.yml lists - `conda env create`, unlike
+# `conda create`, has no `--override-channels` flag to skip that check,
+# so without this the loop below just hangs on an interactive prompt the
+# first time any of these three envs gets created. None of lumpy-sv.yml,
+# bw.yml or ampsuite.yml actually needs a package from `defaults`; this
+# only silences the otherwise-hanging prompt.
+conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/main
+conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/r
+
 for name in lumpy-sv bw ampsuite; do
   target="${CONDA_ENVS}/${name}"
   if [ -d "${target}" ]; then
@@ -22,22 +41,5 @@ for name in lumpy-sv bw ampsuite; do
   echo "Creating ${name} at ${target}"
   conda env create -f "${ENV_DIR}/${name}.yml" -p "${target}"
 done
-
-# ampsuite (AmpliconSuite) needs a MOSEK license at runtime. This can't be
-# fetched here - MOSEK only issues license files via their web form to a
-# verified academic/institutional email, then emails you the .lic file. This
-# just checks it's in the place MOSEK looks by default and points you at the
-# request page if it's missing; nothing to configure in nextflow.config.
-MOSEK_LIC="${HOME}/mosek/mosek.lic"
-if [ -s "${MOSEK_LIC}" ]; then
-  echo "Found MOSEK license at ${MOSEK_LIC}"
-else
-  echo
-  echo "WARNING: no MOSEK license found at ${MOSEK_LIC}."
-  echo "  RUN_AMPLICONARCHITECT (ampsuite env) will fail without one."
-  echo "  Request a personal academic license (needs an academic email):"
-  echo "    https://www.mosek.com/license/request/personal-academic/"
-  echo "  Then save the emailed file to: ${MOSEK_LIC}"
-fi
 
 echo "Done. Envs live under ${CONDA_ENVS}, matching params.conda_envs in nextflow.config."
