@@ -199,7 +199,7 @@ workflow {
 
 process PREPROCESS {
     tag "${meta.id}"
-    publishDir "${params.results}/${meta.id}/preprocess", mode: 'copy'
+    publishDir "${params.results}/${meta.id}/preprocess", mode: 'move'
 
     input:
     tuple val(meta), path(reads)
@@ -252,7 +252,7 @@ process GENERATE_BAMS_LIST {
 
 process MERGE_BAMS {
     tag "${meta.type}"
-    publishDir "${params.results}/${meta.id}", mode: 'copy'
+    publishDir "${params.results}/${meta.id}", mode: 'move'
 
     input:
     tuple val(meta), path(bams_list), path(bams)
@@ -317,7 +317,7 @@ process RUN_LUMPY {
     tag "${meta.id}_${meta.type}"
     beforeScript "module load miniconda\n${params.nxf_patch_130}"
     conda "${params.lumpy_env}"
-    publishDir "${params.results}/${meta.id}", mode: 'copy'
+    publishDir "${params.results}/${meta.id}", mode: 'move'
 
     input:
     tuple val(meta), path(bam), path(bai)
@@ -334,7 +334,7 @@ process RUN_LUMPY {
 
 process RUN_BAMCOVERAGE {
     tag "${tumor_meta.id}_bamcoverage"
-    publishDir "${params.results}/${tumor_meta.id}/coverage", mode: 'copy'
+    publishDir "${params.results}/${tumor_meta.id}/coverage", mode: 'move'
 
     input:
     tuple val(tumor_meta), path(bam), path(bai)
@@ -353,7 +353,7 @@ process RUN_STATS {
     tag "${meta.id}_${meta.type}"
     beforeScript "module load miniconda\n${params.nxf_patch_130}"
     conda "${params.lumpy_env}"
-    publishDir "${params.results}/${meta.id}", mode: 'copy'
+    publishDir "${params.results}/${meta.id}", mode: 'move'
 
     input:
     tuple val(meta), path(bam), path(bai)
@@ -372,7 +372,7 @@ process RUN_AMPLICONARCHITECT {
     tag "${meta.id}"
     beforeScript "module load miniconda\n${params.nxf_patch_130}"
     conda "${params.ampsuite_env}"
-    publishDir "${params.results}/${meta.id}/AmpliconSuite", mode: 'copy'
+    publishDir "${params.results}/${meta.id}/AmpliconSuite", mode: 'move'
 
     input:
     tuple val(meta), path(bam), path(bai)
@@ -417,7 +417,7 @@ process RUN_GATK {
 
 process MERGE_GATK_VCFS {
     tag "${tumor_meta.id}"
-    publishDir "${params.results}/${tumor_meta.id}", mode: 'copy'
+    publishDir "${params.results}/${tumor_meta.id}", mode: 'move'
 
     input:
     tuple val(tumor_meta), path(vcf_list)
@@ -437,7 +437,7 @@ process MERGE_GATK_VCFS {
 process RUN_ASCAT {
     tag "${tumor_meta.id}_vs_${normal_meta.id}"
     container "${params.cgpwgs_sif}"
-    publishDir "${params.results}/${tumor_meta.id}", mode: 'copy'
+    publishDir "${params.results}/${tumor_meta.id}", mode: 'move'
 
     input:
     tuple val(tumor_meta), path(tumor_bam), path(tumor_bai), val(normal_meta), path(normal_bam), path(normal_bai)
@@ -825,7 +825,7 @@ process CAVEMAN_MERGE_RESULTS {
 process CAVEMAN_ADD_IDS {
     tag "${tumor_meta.id}_add_ids"
     container "${params.cgpwgs_sif}"
-    publishDir "${params.results}/${tumor_meta.id}", mode: 'copy', pattern: 'caveman_done.flag'
+    publishDir "${params.results}/${tumor_meta.id}", mode: 'move', pattern: 'caveman_done.flag'
     cpus 1
     memory '48 GB'
 
@@ -864,7 +864,7 @@ process ARCHIVE {
     tag "${tumor_meta.id}_vs_${params.normal}_archive"
     beforeScript "module load miniconda\n${params.nxf_patch_130}"
     conda "${params.bw_env}"
-    publishDir "${params.results}/${tumor_meta.id}", mode: 'copy'
+    publishDir "${params.results}/${tumor_meta.id}", mode: 'move'
 
     input:
     tuple val(tumor_meta), path(tumor_lumpy_dir, stageAs: 'tumor_lumpy'), path(normal_lumpy_dir, stageAs: 'normal_lumpy'), path(coverage_bg), path(ascat_dir), path(caveman_flag)
