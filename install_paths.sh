@@ -24,6 +24,5 @@ if [[ -d "$REPO_DIR/scripts" && "$REPO_DIR/scripts" != "$BASE/scripts" ]]; then
 fi
 
 echo "Directory layout ready under $BASE"
-echo "Still needed by hand: genome fasta under data/genome/hg38/, fastq"
-echo "files under data/fastq/<sample>/, and the ASCAT GC-correction file"
-echo "under refs/hg38/.../ascat/ - see nextflow.config for exact filenames."
+echo "Still needed by hand: genome fasta under data/genome/hg38/, and"
+echo "fastq files under data/fastq/<sample>/."
