@@ -199,6 +199,8 @@ workflow {
 
 process PREPROCESS {
     tag "${meta.id}"
+    // No publishDir - preprocess.sh writes into ${params.results} directly.
+    // The output declared below is a hardlink for Nextflow's output glob.
 
     input:
     tuple val(meta), path(reads)
