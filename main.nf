@@ -382,7 +382,7 @@ process RUN_AMPLICONARCHITECT {
     """
     set -xeuo pipefail
     export AA_DATA_REPO=${params.ampsuite_data_repo}
-    mkdir -p $AA_DATA_REPO
+    mkdir -p ${params.ampsuite_data_repo}
     wget https://raw.githubusercontent.com/AmpliconSuite/AmpliconSuite-pipeline/master/install.sh 2>&1 && bash install.sh --finalize_only 2>&1
     rm -f install.sh
     AmpliconSuite-pipeline.py --download_repo ${params.assembly} 2>&1
