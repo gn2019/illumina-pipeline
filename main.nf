@@ -205,7 +205,6 @@ process PREPROCESS {
 
     output:
     tuple val(meta), path("${meta.id}/*.dedup.bam"), emit: final_bam
-    path("*"), emit: all_intermediates
 
     script:
     """
@@ -381,6 +380,7 @@ process RUN_AMPLICONARCHITECT {
 
     script:
     """
+    set -xeuo pipefail
     export AA_DATA_REPO=${params.ampsuite_data_repo}
     mkdir -p $AA_DATA_REPO
     wget https://raw.githubusercontent.com/AmpliconSuite/AmpliconSuite-pipeline/master/install.sh 2>&1 && bash install.sh --finalize_only 2>&1
@@ -481,6 +481,7 @@ process ASCAT_TO_CAVEMAN {
 
     script:
     """
+    set -x
     set +e
 
     perl -ne '@F=(split q{,}, \$_)[1,2,3,6]; \$F[1]--; print join("\\t",@F)."\\n";' \\
@@ -875,7 +876,7 @@ process ARCHIVE {
     def caveman_vcf_gz = "${params.results}/${tumor_meta.id}/caveman/${tumor_meta.id}_vs_${params.normal}.muts.ids.vcf.gz"
     def archive_name    = "${tumor_meta.id}_vs_${params.normal}.visualize.tar.gz"
     """
-    set -euo pipefail
+    set -xeuo pipefail
     workdir=\$(mktemp -d)
 
     # sample.vcf - the tumor's lumpy SV calls. Required.
