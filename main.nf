@@ -199,7 +199,6 @@ workflow {
 
 process PREPROCESS {
     tag "${meta.id}"
-    publishDir "${params.results}/${meta.id}/preprocess", mode: 'move'
 
     input:
     tuple val(meta), path(reads)
@@ -437,7 +436,7 @@ process MERGE_GATK_VCFS {
 process RUN_ASCAT {
     tag "${tumor_meta.id}_vs_${normal_meta.id}"
     container "${params.cgpwgs_sif}"
-    publishDir "${params.results}/${tumor_meta.id}", mode: 'move'
+    publishDir "${params.results}/${tumor_meta.id}", mode: 'copy'
 
     input:
     tuple val(tumor_meta), path(tumor_bam), path(tumor_bai), val(normal_meta), path(normal_bam), path(normal_bai)
