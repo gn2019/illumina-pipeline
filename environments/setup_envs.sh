@@ -32,6 +32,16 @@ module load miniconda/26.1.1_environmentally
 conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/main
 conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/r
 
+# ampsuite.yml pulls in the `mosek` package (from the `mosek` channel) even
+# though ampliconsuite's actual solver is the free bundled Clarabel. As of
+# ampliconsuite 1.6.0, ampliconarchitectlib/bam_to_breakpoint.py does an
+# unconditional `import mosek_solver` -> `import mosek` at module load time,
+# so RUN_AMPLICONARCHITECT fails with ModuleNotFoundError before it ever
+# gets to pick a solver if the mosek package isn't installed - regardless of
+# which solver you actually intend to use. The existing free/trial license
+# at ~/mosek/mosek.lic is enough to satisfy the import. Revisit this if a
+# future ampliconsuite release makes that import lazy/optional.
+
 for name in lumpy-sv bw ampsuite; do
   target="${CONDA_ENVS}/${name}"
   if [ -d "${target}" ]; then

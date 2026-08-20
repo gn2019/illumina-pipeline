@@ -2,6 +2,7 @@ name: ampsuite
 channels:
   - conda-forge
   - bioconda
+  - mosek
   - nodefaults
 dependencies:
   - _openmp_mutex=4.5
@@ -116,6 +117,7 @@ dependencies:
   - make=4.4.1
   - markupsafe=3.0.3
   - matplotlib-base=3.10.9
+  - mosek=11.1.9
   - mscorefonts=0.0.1
   - munkres=1.1.4
   - ncurses=6.6
