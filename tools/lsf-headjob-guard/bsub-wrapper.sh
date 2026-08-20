@@ -16,11 +16,16 @@
 #     straight through to the real bsub, completely untouched. Normal
 #     LSF scheduling for actual pipeline work is unaffected.
 #
-# See ../README.md for why this exists.
+# See ../README.md for why this exists. Cancellation of these detached
+# head jobs from Seqera Platform is handled by the companion
+# bkill-wrapper.sh, which reads the registry file this script writes to
+# below.
 
 REAL_BSUB="__REAL_BSUB__"
 LOGFILE="$HOME/.bsub_wrapper/wrapper.log"
+REGISTRY="$HOME/.bsub_wrapper/intercepted_jobs"
 mkdir -p "$HOME/.bsub_wrapper/scripts"
+touch "$REGISTRY"
 
 ts() { date '+%Y-%m-%d %H:%M:%S'; }
 
@@ -44,6 +49,12 @@ if printf '%s\n' "$script_content" | grep -q '^#BSUB -J nf-workflow-'; then
   disown
   pid=$!
   echo "$(ts) -> detached PID $pid, script $runfile" >> "$LOGFILE"
+
+  # Record pid -> jobname so bkill-wrapper.sh can find and kill this
+  # process when Seqera cancels the run by the fake job ID below (setsid
+  # made $pid a process group leader, so bkill-wrapper can signal the
+  # whole group).
+  echo "$pid $jobname" >> "$REGISTRY"
 
   # Fake bsub's normal "submitted" line so anything parsing our stdout
   # (e.g. Seqera Platform / tw-agent) doesn't choke on unexpected output.

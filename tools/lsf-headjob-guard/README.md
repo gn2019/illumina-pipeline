@@ -71,6 +71,26 @@ already-running process, and (in practice) module loads run after
 needs to be restarted with `~/bin` forced to the front of `PATH` at the
 moment it starts - see `INSTALL.md` for the exact command.
 
+## Cancelling a head job from Seqera
+
+Running the head job as a detached process instead of a real LSF job has a
+side effect: cancelling. Seqera Platform's "Cancel" action calls
+`bkill <jobID>`, using the fake job ID (the process's PID) that
+`bsub-wrapper.sh` printed at submission time. Without anything else in
+place, real `bkill` just fails on that ID (WEXAC LSF never heard of it),
+so there'd be no way to stop the run from Seqera - only by killing the PID
+by hand on the compute host.
+
+`bkill-wrapper.sh` is installed the same way as `bsub-wrapper.sh`: dropped
+at `~/bin/bkill`, ahead of the real `bkill` in `tw-agent`'s `PATH`.
+`bsub-wrapper.sh` records `<pid> <jobname>` for every head job it
+intercepts in `~/.bsub_wrapper/intercepted_jobs`; when `bkill-wrapper.sh`
+sees a call whose job ID (or `-J` job name) matches an entry there, it
+signals that process group directly (`SIGTERM`, then `SIGKILL` if it's
+still around after a couple seconds) and reports success in `bkill`'s
+usual format, instead of forwarding to LSF. Every other `bkill` call - i.e.
+cancelling a real pipeline task - passes straight through untouched.
+
 ## Install
 
 See `INSTALL.md`.
@@ -79,6 +99,7 @@ See `INSTALL.md`.
 
 ```bash
 which bsub                          # should print ~/bin/bsub
+which bkill                         # should print ~/bin/bkill
 tail -f ~/.bsub_wrapper/wrapper.log
 ```
 
@@ -92,12 +113,30 @@ like:
 Every real task submission logs a `PASSTHROUGH(task)` line instead, and
 should keep showing up normally in `bjobs`.
 
+Then hit Cancel on that run in Seqera Platform and watch for:
+
+```
+2026-08-19 12:31:12 INTERCEPTED kill of head job 'nf-workflow-<sessionID>' (fake job <PID>)
+2026-08-19 12:31:14 -> PID <PID> stopped
+```
+
+and confirm the process is actually gone with `ps -fp <PID>`. Cancelling a
+real pipeline task instead logs a `PASSTHROUGH(bkill)` line and behaves
+exactly like plain `bkill`.
+
 ## Known limitation
 
-This relies on `tw-agent` resolving `bsub` via a plain `PATH` lookup. If
-Seqera ever changes `tw-agent` to call an absolute path, or bundles its own
-`bsub` resolution logic, this stops applying and the wrapper is simply
-never hit (harmless - `bsub` for everything else keeps working normally
-either way, it just stops intercepting head jobs). There's no way to
-verify this ahead of time other than triggering a real run and checking
-`wrapper.log`, as above.
+Both wrappers rely on `tw-agent` resolving `bsub`/`bkill` via a plain
+`PATH` lookup. If Seqera ever changes `tw-agent` to call an absolute path,
+or bundles its own resolution logic for either binary, this stops applying
+and the relevant wrapper is simply never hit (harmless - `bsub`/`bkill` for
+everything else keeps working normally either way, it just stops
+intercepting head jobs). There's no way to verify this ahead of time other
+than triggering a real run and checking `wrapper.log`, as above.
+
+`bkill-wrapper.sh` matches fake job IDs by treating any bare numeric
+argument as a candidate PID, and any other argument as a candidate job
+name - it doesn't parse `bkill`'s full flag grammar. This mirrors how
+`bsub-wrapper.sh` only looks for the `#BSUB -J nf-workflow-` tag rather
+than fully parsing LSF directives, and is deliberately best-effort rather
+than a complete `bkill` reimplementation.
