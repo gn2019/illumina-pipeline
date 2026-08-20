@@ -129,14 +129,11 @@ rm -f "${persist}/${run}_sorted.bam"*
 # main.nf's PREPROCESS process declares its output as
 # path("${meta.id}/*.dedup.bam") - i.e. it expects a directory named after
 # the sample, not "noERX" or anything else. Symlinking (cheap, no data copy)
-# the persisted dedup bam + qc dirs in here is what makes that output glob
+# the persisted dedup bam in here is what makes that output glob
 # actually match, and what publishDir then copies out.
 mkdir -p "${sample}"
 ln -f "${persist}/${run}_sorted.dedup.bam" "${sample}/${run}_sorted.dedup.bam"
 [ -f "${persist}/${run}_sorted.dedup.bam.bai" ] && ln -f "${persist}/${run}_sorted.dedup.bam.bai" "${sample}/${run}_sorted.dedup.bam.bai"
-cp -r "${persist}/qc_raw" "${persist}/qc_trimmed" "${sample}/" 2>/dev/null || true
-
-# chmod +x *
 
 echo "=========================================================="
 echo "Finished on : $(date)"
