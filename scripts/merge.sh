@@ -12,7 +12,7 @@ bam_list=$2        # text file with paths to *.dedup.bam
 merged_bam=${sample}.bam
 
 echo "Merging BAMs for ${sample}"
-samtools merge -@ ${LSB_DJOB_NUMPROC} -b "${bam_list}" "${merged_bam}"
+samtools merge -@ "${LSB_DJOB_NUMPROC:-1}" -b "${bam_list}" "${merged_bam}"
 
 echo "Indexing merged BAM"
 samtools index "${merged_bam}"

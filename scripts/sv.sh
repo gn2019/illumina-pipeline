@@ -71,11 +71,17 @@ fi
 if ! has_ckpt lumpy; then
   date
 
+  # Empty exclude bed is forbidden - only pass -x when it has a content.
+  exclude_arg=()
+  if [[ -s "$exclude" ]]; then
+    exclude_arg=(-x "$exclude")
+  fi
+
   lumpyexpress \
     -B $bam \
     -S lumpy/splitters.bam \
     -D lumpy/discordants.bam \
-    -x $exclude \
+    "${exclude_arg[@]}" \
     -R $genome \
     -o $bam.vcf
 
