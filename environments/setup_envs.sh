@@ -1,23 +1,22 @@
 #!/usr/bin/env bash
 # One-time setup for the pipeline's conda envs.
 #
-# Not a Nextflow process, by design: main.nf's RUN_LUMPY/RUN_STATS,
-# RUN_AMPLICONARCHITECT and ARCHIVE processes reference these envs by
-# fixed path (params.lumpy_env / params.ampsuite_env / params.bw_env in
-# nextflow.config, all under params.conda_envs = "$HOME/.conda/envs").
-# Build them once here so the paths already in nextflow.config resolve -
-# no config changes needed. Rerun a single env's line below if you update
-# that env's .yml.
+# main.nf's RUN_LUMPY, RUN_STATS, RUN_AMPLICONARCHITECT and ARCHIVE
+# processes reference these envs by fixed path (params.*_env in nextflow.config,
+# all under params.conda_envs = "$HOME/.conda/envs"). Build them once here.
+# Rerun a single env's line below if you update that env's .yml.
 set -euo pipefail
 
 ENV_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONDA_ENVS="${HOME}/.conda/envs"
 
+# Why specific miniconda?
 # WEXAC's default `mamba`/`conda` module has a solver old enough to report
 # false "nothing provides X" errors for packages that are perfectly real
 # (mscorefonts, pomegranate, biopython all hit this) - load the modern one.
 module load miniconda/26.1.1_environmentally
 
+# Why ToS?
 # One-time-per-account, safe to run every time (no-op once accepted):
 # accepts Anaconda's Terms of Service for the `defaults` channels
 # (repo.anaconda.com/pkgs/main and /pkgs/r). WEXAC's conda module ships
@@ -32,6 +31,7 @@ module load miniconda/26.1.1_environmentally
 conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/main
 conda tos accept --override-channels --channel https://repo.anaconda.com/pkgs/r
 
+# Why mosek?
 # ampsuite.yml pulls in the `mosek` package (from the `mosek` channel) even
 # though ampliconsuite's actual solver is the free bundled Clarabel. As of
 # ampliconsuite 1.6.0, ampliconarchitectlib/bam_to_breakpoint.py does an

@@ -12,9 +12,9 @@ DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 "$DIR/install_paths.sh" "$@"
 bash "$DIR/environments/setup_envs.sh"
-bash "$DIR/containers/build.sh"
 for installer in "$DIR"/tools/*/install.sh; do
   [[ -f "$installer" ]] && bash "$installer"
 done
+bash "$DIR/containers/build.sh"
 
 echo "All installers finished."
