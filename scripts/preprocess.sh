@@ -29,28 +29,19 @@ genome=$5
 name1=`echo "$fastq1" | awk -F"[/\.]" '{print $(NF-2)}'`
 name2=`echo "$fastq2" | awk -F"[/\.]" '{print $(NF-2)}'`
 
-# Per-lane run id (e.g. "ERR3085889_1" -> "ERR3085889"). Derived from the
-# fastq filename itself rather than a caller-supplied argument, so it's
-# always correct and always unique per read-pair/lane - a sample with
-# multiple lanes (like SAMEA104693125 -> ERR3085889 + ERR3085891) gets one
-# distinct run id per lane instead of everything colliding on a single
-# hardcoded name.
+# Per-lane run id (e.g. "ERR3085889_1" -> "ERR3085889"), derived from the
+# fastq filename so a multi-lane sample gets one distinct run id per lane
+# instead of everything colliding on one hardcoded name.
 run="${name1%_1}"
 
-# Nextflow gives every task attempt (including retries and non-cached
-# -resume launches) a brand-new, EMPTY work directory - that's fundamental
-# to how it isolates and caches tasks. A checkpoint file living only inside
-# that ephemeral directory can never survive a retry, so it never actually
-# skips anything. To make checkpointing meaningful, all real work below
-# happens in a persistent, per-sample-per-lane directory on shared storage
-# (under params.results, passed in as $results) that outlives any single
-# task attempt.
+# Nextflow gives every task attempt a brand-new, EMPTY work dir, so a
+# checkpoint file living there can never survive a retry. To make
+# checkpointing meaningful, real work happens in a persistent per-sample-
+# per-lane dir on shared storage ($results) that outlives any one attempt.
 #
-# NOTE: this assumes a given (sample, run) pair is never processed by two
-# concurrently-running task attempts at once (e.g. two overlapping -resume
-# launches on the same run) - concurrent writers to the same persist dir
-# would race. Normal retry-after-failure and -resume-after-relaunch usage
-# is safe since only one attempt is ever actively running at a time.
+# NOTE: assumes a given (sample, run) is never processed by two
+# concurrently-running attempts at once - concurrent writers to the same
+# persist dir would race. Normal retry/-resume usage is safe.
 persist="${results}/${sample}/preprocess/${run}"
 mkdir -p "${persist}/qc_raw" "${persist}/qc_trimmed" "${persist}/trimmed_reports"
 
@@ -125,12 +116,9 @@ fi
 ## remove large pre-dedup sorted bam once dedup has succeeded
 rm -f "${persist}/${run}_sorted.bam"*
 
-# --- Hand the result back to THIS Nextflow task's own (ephemeral) work dir.
-# main.nf's PREPROCESS process declares its output as
-# path("${meta.id}/*.dedup.bam") - i.e. it expects a directory named after
-# the sample, not "noERX" or anything else. Symlinking (cheap, no data copy)
-# the persisted dedup bam in here is what makes that output glob
-# actually match, and what publishDir then copies out.
+# --- Hand the result back to THIS task's own ephemeral work dir.
+# main.nf's PREPROCESS expects output path("${meta.id}/*.dedup.bam"), so
+# symlink the persisted dedup bam under a dir named after the sample.
 mkdir -p "${sample}"
 ln -f "${persist}/${run}_sorted.dedup.bam" "${sample}/${run}_sorted.dedup.bam"
 [ -f "${persist}/${run}_sorted.dedup.bam.bai" ] && ln -f "${persist}/${run}_sorted.dedup.bam.bai" "${sample}/${run}_sorted.dedup.bam.bai"

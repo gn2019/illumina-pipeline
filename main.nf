@@ -1,6 +1,24 @@
 // ==========================================
 // main.nf
 // ==========================================
+//
+// WORKFLOW OVERVIEW
+// -----------------
+// PREPROCESS      fastq -> trimmed, mapped, dedup'd BAM (per lane, then merged)
+// DOWNLOAD_REFS   fetches the reference bundles every caller/ASCAT step needs
+// PREPARE_BEDS    splits the genome into standard chroms (include) vs the rest (exclude)
+// RUN_LUMPY       structural variants, tumor & normal
+// RUN_STATS       coverage & alignment QC (mosdepth, samtools stats)
+// RUN_AMPLICONARCHITECT   hunts for focal amplicons in tumor BAMs
+// RUN_BAMCOVERAGE bigwig coverage tracks, tumor only
+// RUN_GATK        Mutect2 somatic SNVs/indels, scattered across BED chunks
+// RUN_ASCAT       tumor/normal copy number + purity/ploidy
+// ASCAT_TO_CAVEMAN   turns ASCAT's copy number into CaVEMan's -tc/-nc/-k flags
+// CAVEMAN         somatic SNVs, chromosome-parallel setup->...->add_ids pipeline
+// ARCHIVE         zips the lumpy/coverage/ASCAT/CaVEMan outputs for visualization
+//
+// Every step past PREPROCESS can be toggled off with params.skip_* - see
+// nextflow.config.
 nextflow.enable.dsl=2
 
 // ==========================================
@@ -128,14 +146,10 @@ workflow {
 
         ch_ascat_dir = RUN_ASCAT.out.ascat_out.map { tumor_meta, normal_meta, dir -> [ tumor_meta.id, dir ] }
 
-        // Build the caveman.pl copy-number flags ONCE per tumor/normal pair
-        // here, so every caveman.pl step downstream (setup, split, mstep,
-        // estep, ...) is invoked with identical, consistent flags. Default
-        // is to follow the ASCAT->CaVEMan flow (params.follow_ascat_caveman_flow
-        // = true); set it to false to always use the flat -td/-nd defaults
-        // instead. Even when set to follow, if ASCAT didn't produce usable
-        // cn.bed files or a normal contamination value for a sample, this
-        // still falls back to -td/-nd rather than failing the pair.
+        // Build the caveman.pl copy-number flags ONCE per pair so every
+        // downstream step uses identical flags. Follows ASCAT->CaVEMan by
+        // default (params.follow_ascat_caveman_flow); falls back to flat
+        // -td/-nd if that's false, or if ASCAT's outputs are unusable.
         ch_cn_args = ASCAT_TO_CAVEMAN.out.cn_data.map { tumor_meta, normal_meta, tumor_cn_bed, normal_cn_bed, normal_contamination ->
             def has_cn_data = params.follow_ascat_caveman_flow &&
                 tumor_cn_bed.size() > 0 && normal_cn_bed.size() > 0 && normal_contamination?.trim()
@@ -149,11 +163,9 @@ workflow {
         ch_cn_args = ch_paired_somatic.map { tumor_meta, tumor_bam, tumor_bai, normal_meta, normal_bam, normal_bai -> [ tumor_meta.id, tumor_meta, empty_cn_bed, empty_cn_bed, "-td 5 -nd 2" ] }
     }
 
-    // CAVEMAN is NOT BED-chunked here. caveman.pl does its own internal
-    // chromosome-level split/mstep/estep parallelization, so we drive that
-    // explicitly as one Nextflow/LSF task per split index (mirrors the
-    // manual bsub job-array script) instead of letting a single caveman.pl
-    // invocation loop over everything internally with -t.
+    // CAVEMAN is NOT BED-chunked: caveman.pl already parallelizes by
+    // chromosome internally, so each split index runs as its own
+    // Nextflow/LSF task (mirrors the manual bsub job-array script).
     if (!params.skip_caveman) {
         ch_caveman_done = CAVEMAN(
             ch_paired_somatic,
@@ -170,11 +182,9 @@ workflow {
     }
 
     // --- FINAL VISUALIZATION ARCHIVE ---
-    // There's exactly one normal sample for the whole run (params.normal),
-    // so it's referenced by id directly below rather than carried through
-    // every channel as its own value. If any of lumpy/coverage/ascat/caveman
-    // was skipped, ARCHIVE is skipped too - it isn't worth trying to
-    // patch together a partial archive from steps that didn't run.
+    // Only one normal per run (params.normal), so it's referenced by id
+    // directly instead of carried through channels. Skipped if any of
+    // lumpy/coverage/ascat/caveman was skipped - no partial archives.
     if (!params.skip_archive && !params.skip_lumpy && !params.skip_coverage && !params.skip_ascat && !params.skip_caveman) {
         ch_archive_in = ch_paired_somatic
             .map { tumor_meta, tumor_bam, tumor_bai, normal_meta, normal_bam, normal_bai -> [ tumor_meta.id, tumor_meta ] }
@@ -463,12 +473,10 @@ process RUN_ASCAT {
     """
 }
 
-// ASCAT's per-tumour copynumber.caveman.csv already carries both the tumour
-// and normal copy-number segments (columns: chr,start,stop,normal_total_cn,
-// normal_minor_cn,tumour_total_cn,tumour_minor_cn - 1-indexed after
-// splitting on comma), and its samplestatistics.txt carries the normal
-// contamination fraction CaVEMan expects via -k. This process turns those
-// into the two BED files + contamination value CaVEMan needs.
+// Converts ASCAT's per-tumour copynumber.caveman.csv (cols: chr,start,stop,
+// normal_total_cn,normal_minor_cn,tumour_total_cn,tumour_minor_cn) and
+// samplestatistics.txt into the two cn.bed files + contamination value
+// CaVEMan's -tc/-nc/-k need.
 process ASCAT_TO_CAVEMAN {
     tag "${tumor_meta.id}_ascat2caveman"
     container "${params.cgpwgs_sif}"
@@ -505,17 +513,13 @@ process ASCAT_TO_CAVEMAN {
 // ==========================================
 // CAVEMAN SUBWORKFLOW
 // ==========================================
-// caveman.pl orchestrates setup -> split -> split_concat -> mstep -> merge ->
-// estep -> merge_results -> add_ids, and every one of those steps reads and
-// writes into the SAME shared output directory tree (it manages its own
-// state there - it is not a clean isolated in/out tool). So instead of
-// scattering by BED region and running caveman.pl end-to-end inside a single
-// task (which forced its own internal split/mstep/estep to run serially,
-// using only local -t threads), each step below is its own Nextflow process,
-// fanned out one task per split index - exactly like the manual bsub
-// job-array script. Every step targets a FIXED absolute outdir per
-// tumor/normal pair so state persists across tasks; only lightweight
-// context/index values flow through the channels.
+// caveman.pl's steps (setup -> split -> split_concat -> mstep -> merge ->
+// estep -> merge_results -> add_ids) all read/write the SAME shared output
+// dir - it's not a clean isolated in/out tool. So each step is its own
+// Nextflow process, fanned out one task per split index (mirrors the manual
+// bsub job-array script), rather than one task running caveman.pl serially
+// end-to-end. Every step targets a FIXED outdir per pair so state persists;
+// only lightweight context/index values flow through the channels.
 workflow CAVEMAN {
     take:
     ch_pairs              // tuple(tumor_meta, tumor_bam, tumor_bai, normal_meta, normal_bam, normal_bai)
@@ -537,12 +541,10 @@ workflow CAVEMAN {
             [ tumor_meta, tumor_bam, tumor_bai, normal_meta, normal_bam, normal_bai, outdir, tumor_cn_bed, normal_cn_bed, cn_args ]
         }
 
-    // SETUP is the only step that touches the bam/reference/cn.bed channels
-    // - it symlinks everything caveman needs into the shared outdir ONCE,
-    // using fixed relative names, and carries the resolved cn_args string
-    // forward. Every step after this only needs (tumor_meta, outdir,
-    // cn_args[, idx]) - it cds into outdir and the relative names already
-    // resolve, so there's no repeated readlink/relinking per task.
+    // SETUP is the only step touching the bam/reference/cn.bed channels -
+    // it symlinks everything caveman needs into the shared outdir ONCE
+    // under fixed names. Every later step just needs (tumor_meta, outdir,
+    // cn_args[, idx]) and cds in, so there's no repeated relinking.
     CAVEMAN_SETUP(ch_pair_ctx, genome_fasta, filtered_fai, caveman_blacklist, caveman_indels, caveman_indels_tbi)
     // CAVEMAN_SETUP.out: tuple(tumor_meta, outdir, cn_args)
 
@@ -624,11 +626,8 @@ process CAVEMAN_SETUP {
     mkdir -p ${outdir}
 
     # Symlink everything caveman needs into the shared outdir under FIXED
-    # relative names, once. Every later step just cds into outdir and
-    # references these names directly - no re-linking, no path resolution.
-    # tumor_cn.bed/normal_cn.bed are always linked (even when cn_args falls
-    # back to -td/-nd and doesn't reference them) so the outdir layout is
-    # identical either way.
+    # relative names, once. cn.bed files are always linked - even when
+    # cn_args falls back to -td/-nd - so the outdir layout stays identical.
     ln -fs \$(readlink -f ${genome_fasta}) ${outdir}/local_genome.fa
     ln -fs \$(readlink -f ${filtered_fai}) ${outdir}/local_genome.fa.fai
     ln -fs \$(readlink -f ${tumor_bam}) ${outdir}/tumor.bam
@@ -643,9 +642,8 @@ process CAVEMAN_SETUP {
     touch ${outdir}/empty.txt
     mkdir -p ${outdir}/empty_dir
 
-    # caveman.pl records the CWD it was invoked from as part of its setup
-    # state and refuses to run again from a different CWD, so every step
-    # must cd into this same fixed, shared outdir before invoking it.
+    # caveman.pl refuses to run again from a different CWD than it was
+    # first invoked from, so every step must cd into the same shared outdir.
     cd ${outdir}
 
     caveman.pl -o ${outdir} \\
@@ -856,12 +854,10 @@ process CAVEMAN_ADD_IDS {
     """
 }
 
-// Bundles the per-tumor visualization inputs into a single tar.gz. sample.vcf
-// (the tumor's lumpy SV calls) is the only mandatory member - everything
-// else is included if present and silently skipped otherwise. The caveman
-// SNV vcf is read from its well-known published path (same convention the
-// CAVEMAN subworkflow above uses for its shared outdir) rather than staged
-// as a formal Nextflow input, since it's one of several optional members.
+// Bundles the per-tumor visualization inputs into a single tar.gz. Only
+// sample.vcf (tumor's lumpy SV calls) is mandatory - everything else is
+// included if present, skipped otherwise. The caveman VCF is read from its
+// published path rather than staged as a formal input, since it's optional.
 process ARCHIVE {
     tag "${tumor_meta.id}_vs_${params.normal}_archive"
     beforeScript "module load miniconda\n${params.nxf_patch_130}"
