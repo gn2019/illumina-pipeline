@@ -65,7 +65,14 @@ workflow {
         ch_preprocess_outputs = PREPROCESS(ch_fastqs)
         ch_grouped_bams = ch_preprocess_outputs.final_bam.groupTuple(by: 0)
         ch_bams_lists   = GENERATE_BAMS_LIST(ch_grouped_bams)
+        // Remap MERGE_BAMS' output onto the published path, as in the "found on disk"
+        // channel below, so downstream tasks get an identical input hash, for -resume.
         ch_merged_bams  = MERGE_BAMS(ch_bams_lists)
+            .map { meta, bam, bai ->
+                [ meta,
+                  file("${params.results}/${meta.id}/${meta.id}.bam"),
+                  file("${params.results}/${meta.id}/${meta.id}.bam.bai") ]
+            }
 
         // Mix pre-existing static samples with newly generated ones
         ch_all_processed_samples = ch_ready_samples.mix(ch_merged_bams)
