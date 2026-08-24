@@ -9,6 +9,7 @@
 // PREPARE_BEDS    splits the genome into standard chroms (include) vs the rest (exclude)
 // RUN_LUMPY       structural variants, tumor & normal
 // RUN_STATS       coverage & alignment QC (mosdepth, samtools stats)
+// PREPARE_AMPLICONARCHITECT  one-time AmpliconSuite install + data repo download
 // RUN_AMPLICONARCHITECT   hunts for focal amplicons in tumor BAMs
 // RUN_BAMCOVERAGE bigwig coverage tracks, tumor only
 // RUN_GATK        Mutect2 somatic SNVs/indels, scattered across BED chunks
@@ -105,6 +106,15 @@ workflow {
     def empty_cn_bed = file("${workflow.workDir}/.empty_cn.bed")
     if (!empty_cn_bed.exists()) { empty_cn_bed.text = '' }
 
+    // ARCHIVE process treats some of the results as optional but need its input.
+    // Every branch that can be skipped is given a harmless empty placeholder here.
+    def empty_bw        = file("${workflow.workDir}/.empty.bw")
+    if (!empty_bw.exists()) { empty_bw.text = '' }
+    def empty_ascat_dir = file("${workflow.workDir}/.empty_ascat_dir")
+    if (!empty_ascat_dir.exists()) { empty_ascat_dir.mkdirs() }
+    def empty_caveman_flag = file("${workflow.workDir}/.empty_caveman.flag")
+    if (!empty_caveman_flag.exists()) { empty_caveman_flag.text = '' }
+
     if (!params.skip_lumpy) {
         ch_lumpy = RUN_LUMPY(ch_all_samples, PREPARE_BEDS.out.exclude_bed.collect())
         ch_tumor_lumpy_dir  = ch_lumpy.lumpy_out.filter { meta, dir -> meta.type == 'tumor' }.map { meta, dir -> [ meta.id, dir ] }
@@ -114,13 +124,17 @@ workflow {
     }
 
     if (!params.skip_stats)             { RUN_STATS(ch_all_samples) }
-    if (!params.skip_ampliconarchitect) { RUN_AMPLICONARCHITECT(ch_tumor_samples) }
+    if (!params.skip_ampliconarchitect) {
+        PREPARE_AMPLICONARCHITECT()
+        RUN_AMPLICONARCHITECT(ch_tumor_samples, PREPARE_AMPLICONARCHITECT.out.ready.collect())
+    }
 
     if (!params.skip_coverage) {
         ch_bamcoverage = RUN_BAMCOVERAGE(ch_tumor_samples)
         ch_coverage_bg = ch_bamcoverage.coverage.map { meta, bw -> [ meta.id, bw ] }
     } else {
-        log.info "Skipping RUN_BAMCOVERAGE (params.skip_coverage = true) - ARCHIVE will also be skipped"
+        log.info "Skipping RUN_BAMCOVERAGE (params.skip_coverage = true)"
+        ch_coverage_bg = ch_tumor_samples.map { meta, bam, bai -> [ meta.id, empty_bw ] }
     }
 
     // 9. Somatic Paired Analyses
@@ -166,8 +180,9 @@ workflow {
             [ tumor_meta.id, tumor_meta, tumor_cn_bed, normal_cn_bed, cn_args ]
         }
     } else {
-        log.info "Skipping RUN_ASCAT/ASCAT_TO_CAVEMAN (params.skip_ascat = true) - CAVEMAN will use -td 5 -nd 2, ARCHIVE will also be skipped"
+        log.info "Skipping RUN_ASCAT/ASCAT_TO_CAVEMAN (params.skip_ascat = true) - CAVEMAN will use -td 5 -nd 2"
         ch_cn_args = ch_paired_somatic.map { tumor_meta, tumor_bam, tumor_bai, normal_meta, normal_bam, normal_bai -> [ tumor_meta.id, tumor_meta, empty_cn_bed, empty_cn_bed, "-td 5 -nd 2" ] }
+        ch_ascat_dir = ch_tumor_samples.map { meta, bam, bai -> [ meta.id, empty_ascat_dir ] }
     }
 
     // CAVEMAN is NOT BED-chunked: caveman.pl already parallelizes by
@@ -185,14 +200,17 @@ workflow {
         )
         ch_caveman_flag = ch_caveman_done.map { tumor_meta, flag -> [ tumor_meta.id, flag ] }
     } else {
-        log.info "Skipping CAVEMAN (params.skip_caveman = true) - ARCHIVE will also be skipped"
+        log.info "Skipping CAVEMAN (params.skip_caveman = true)"
+        ch_caveman_flag = ch_tumor_samples.map { meta, bam, bai -> [ meta.id, empty_caveman_flag ] }
     }
 
     // --- FINAL VISUALIZATION ARCHIVE ---
     // Only one normal per run (params.normal), so it's referenced by id
-    // directly instead of carried through channels. Skipped if any of
-    // lumpy/coverage/ascat/caveman was skipped - no partial archives.
-    if (!params.skip_archive && !params.skip_lumpy && !params.skip_coverage && !params.skip_ascat && !params.skip_caveman) {
+    // directly instead of carried through channels.
+    // ARCHIVE splits its inputs into one required file (sample.vcf from Lumpy)
+    // and 4 optional ones (background.vcf, snv.vcf, coverage.bedGraph,
+    // baf.bedGraph) that it silently omits from the archive when missing or empty.
+    if (!params.skip_archive && !params.skip_lumpy) {
         ch_archive_in = ch_paired_somatic
             .map { tumor_meta, tumor_bam, tumor_bai, normal_meta, normal_bam, normal_bai -> [ tumor_meta.id, tumor_meta ] }
             .join(ch_tumor_lumpy_dir)
@@ -385,6 +403,37 @@ process RUN_STATS {
     """
 }
 
+process PREPARE_AMPLICONARCHITECT {
+    tag "ampsuite_setup"
+    beforeScript "module load miniconda\n${params.nxf_patch_130}"
+    conda "${params.ampsuite_env}"
+
+    output:
+    val true, emit: ready
+
+    script:
+    """
+    set -xeuo pipefail
+    export AA_DATA_REPO=${params.ampsuite_data_repo}
+    mkdir -p ${params.ampsuite_data_repo}
+
+    # install.sh (AmpliconSuite-pipeline's own finalize step) and --download_repo are
+    # one-time setup shared via ${params.ampsuite_data_repo}. Guard each with a
+    # marker file so a resumed/repeated run skips them once done.
+    if [ ! -f ${params.ampsuite_data_repo}/.install_done ]; then
+        wget https://raw.githubusercontent.com/AmpliconSuite/AmpliconSuite-pipeline/master/install.sh 2>&1
+        bash install.sh --finalize_only 2>&1
+        rm -f install.sh
+        touch ${params.ampsuite_data_repo}/.install_done
+    fi
+
+    if [ ! -f ${params.ampsuite_data_repo}/.repo_${params.assembly}_done ]; then
+        AmpliconSuite-pipeline.py --download_repo ${params.assembly} 2>&1
+        touch ${params.ampsuite_data_repo}/.repo_${params.assembly}_done
+    fi
+    """
+}
+
 process RUN_AMPLICONARCHITECT {
     tag "${meta.id}"
     beforeScript "module load miniconda\n${params.nxf_patch_130}"
@@ -393,6 +442,7 @@ process RUN_AMPLICONARCHITECT {
 
     input:
     tuple val(meta), path(bam), path(bai)
+    val ready
 
     output:
     path "*"
@@ -401,10 +451,6 @@ process RUN_AMPLICONARCHITECT {
     """
     set -xeuo pipefail
     export AA_DATA_REPO=${params.ampsuite_data_repo}
-    mkdir -p ${params.ampsuite_data_repo}
-    wget https://raw.githubusercontent.com/AmpliconSuite/AmpliconSuite-pipeline/master/install.sh 2>&1 && bash install.sh --finalize_only 2>&1
-    rm -f install.sh
-    AmpliconSuite-pipeline.py --download_repo ${params.assembly} 2>&1
     AmpliconSuite-pipeline.py -s ${meta.id} -t 16 --bam ${bam} --run_AA --run_AC 2>&1
     """
 }
