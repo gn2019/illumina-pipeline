@@ -140,14 +140,13 @@ workflow {
     // 9. Somatic Paired Analyses
     ch_paired_somatic = ch_tumor_samples.combine(ch_normal_sample)
 
-    // --- SCATTER PREPARATION (GATK only - Mutect2 benefits from BED-region chunking) ---
-    SPLIT_BED_INTO_CHUNKS(PREPARE_BEDS.out.include_bed.collect())
-    chunk_beds_ch = SPLIT_BED_INTO_CHUNKS.out.flatten()
-
-    ch_scattered_somatic = ch_paired_somatic.combine(chunk_beds_ch)
-
-    // --- RUN SCATTERED TOOLS ---
     if (!params.skip_gatk) {
+        // --- SCATTER PREPARATION (GATK only - Mutect2 benefits from BED-region chunking) ---
+        SPLIT_BED_INTO_CHUNKS(PREPARE_BEDS.out.include_bed.collect())
+        chunk_beds_ch = SPLIT_BED_INTO_CHUNKS.out.flatten()
+
+        ch_scattered_somatic = ch_paired_somatic.combine(chunk_beds_ch)
+
         RUN_GATK(ch_scattered_somatic)
 
         // --- GATHER RESULTS ---
@@ -155,7 +154,7 @@ workflow {
         gatk_per_sample_ch = RUN_GATK.out.groupTuple(by: 0)
         MERGE_GATK_VCFS(gatk_per_sample_ch)
     } else {
-        log.info "Skipping RUN_GATK/MERGE_GATK_VCFS (params.skip_gatk = true)"
+        log.info "Skipping SPLIT_BED_INTO_CHUNKS/RUN_GATK/MERGE_GATK_VCFS (params.skip_gatk = true)"
     }
 
     // ASCAT normally has to run BEFORE CaVEMan: CaVEMan's copy-number input
