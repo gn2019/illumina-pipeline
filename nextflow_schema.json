@@ -7,11 +7,13 @@
   "properties": {
     "tumors": {
       "type": "string",
-      "default": "PD29429h_DM3_40,PD29429i_DM3_640"
+      "default": "PD29429h_DM3_40,PD29429i_DM3_640",
+      "description": "Treated samples, separated by commas"
     },
     "normal": {
       "type": "string",
-      "default": "HELA"
+      "default": "HELA",
+      "description": "Untreated control/background sample"
     },
     "base": {
       "type": "string",
@@ -39,7 +41,8 @@
     },
     "assembly": {
       "type": "string",
-      "default": "GRCh38"
+      "default": "GRCh38",
+      "description": "Genome assembly. Should be one of hg19, GRCh37, GRCh38, mm10 (for AmpliconArchitect repository)."
     },
     "cgpwgs_sif": {
       "type": "string",
@@ -135,6 +138,18 @@
       "type": "boolean",
       "default": false,
       "description": "Skip the final ARCHIVE step entirely. Also skipped automatically if skip_lumpy, skip_coverage, skip_ascat, or skip_caveman is set."
+    },
+    "cleanup": {
+      "type": "boolean",
+      "default": true,
+      "description": "Delete work dirs after a successful run. Set false before -resume.",
+      "hidden": true
+    },
+    "queue": {
+      "type": "string",
+      "default": "short",
+      "description": "LSF queue for every task.",
+      "hidden": true
     }
   }
 }
