@@ -532,8 +532,6 @@ process RUN_ASCAT {
 process ASCAT_TO_CAVEMAN {
     tag "${tumor_meta.id}_ascat2caveman"
     container "${params.cgpwgs_sif}"
-    cpus 1
-    memory '1 GB'
 
     input:
     tuple val(tumor_meta), val(normal_meta), path(ascat_dir)
@@ -659,8 +657,6 @@ workflow CAVEMAN {
 process CAVEMAN_SETUP {
     tag "${tumor_meta.id}_setup"
     container "${params.cgpwgs_sif}"
-    cpus 1
-    memory '4 GB'
 
     input:
     tuple val(tumor_meta), path(tumor_bam), path(tumor_bai), val(normal_meta), path(normal_bam), path(normal_bai), val(outdir), path(tumor_cn_bed), path(normal_cn_bed), val(cn_args)
@@ -713,8 +709,6 @@ process CAVEMAN_SETUP {
 process CAVEMAN_SPLIT {
     tag "${tumor_meta.id}_split_${idx}"
     container "${params.cgpwgs_sif}"
-    cpus 1
-    memory '4 GB'
 
     input:
     tuple val(tumor_meta), val(outdir), val(cn_args), val(idx)
@@ -740,8 +734,6 @@ process CAVEMAN_SPLIT {
 process CAVEMAN_SPLIT_CONCAT {
     tag "${tumor_meta.id}_split_concat"
     container "${params.cgpwgs_sif}"
-    cpus 1
-    memory '4 GB'
 
     input:
     tuple val(tumor_meta), val(outdir), val(cn_args)
@@ -768,7 +760,7 @@ process CAVEMAN_MSTEP {
     tag "${tumor_meta.id}_mstep_${idx}"
     container "${params.cgpwgs_sif}"
     cpus 1
-    memory '64 GB'
+    memory '8 GB'
     maxForks 200
 
     input:
@@ -796,7 +788,7 @@ process CAVEMAN_MERGE {
     tag "${tumor_meta.id}_merge"
     container "${params.cgpwgs_sif}"
     cpus 1
-    memory '48 GB'
+    memory '8 GB'
 
     input:
     tuple val(tumor_meta), val(outdir), val(cn_args)
@@ -823,7 +815,7 @@ process CAVEMAN_ESTEP {
     tag "${tumor_meta.id}_estep_${idx}"
     container "${params.cgpwgs_sif}"
     cpus 1
-    memory '64 GB'
+    memory '8 GB'
     maxForks 200
 
     input:
@@ -851,7 +843,7 @@ process CAVEMAN_MERGE_RESULTS {
     tag "${tumor_meta.id}_merge_results"
     container "${params.cgpwgs_sif}"
     cpus 1
-    memory '48 GB'
+    memory '8 GB'
 
     input:
     tuple val(tumor_meta), val(outdir), val(cn_args)
@@ -879,7 +871,7 @@ process CAVEMAN_ADD_IDS {
     container "${params.cgpwgs_sif}"
     publishDir "${params.results}/${tumor_meta.id}", pattern: 'caveman_done.flag', mode: 'copy'
     cpus 1
-    memory '48 GB'
+    memory '8 GB'
 
     input:
     tuple val(tumor_meta), val(outdir), val(cn_args)
