@@ -50,12 +50,18 @@ fi
 # 3. ASCAT GC Correction
 # ==========================================
 ASCAT_GC_DIR="$REFS_DIR/CNV_SV_ref_GRCh38_hla_decoy_ebv_brass6+"
+ASCAT_GC_FILE="$ASCAT_GC_DIR/ascat/SnpGcCorrections.tsv"
 ASCAT_GC_URL="ftp://ftp.sanger.ac.uk/pub/cancer/dockstore/human/GRCh38_hla_decoy_ebv/CNV_SV_ref_GRCh38_hla_decoy_ebv_brass6+.tar.gz"
 
 if [ ! -d "$ASCAT_GC_DIR" ]; then
     echo "Downloading ASCAT GC Correction file..."
     wget -qO "$ASCAT_GC_DIR.tar.gz" "$ASCAT_GC_URL"
     tar -zxvf "$ASCAT_GC_DIR.tar.gz" -C "$REFS_DIR"
+    # Sort the chromosomes numerically rather than lexicographically;
+    # otherwise, the conversion from bigWig to bedGraph will be incorrect.
+    head -n 1 $ASCAT_GC_FILE > sorted_snp_gc.tsv
+    tail -n +2 $ASCAT_GC_FILE | sort -k2,2V -k3,3n >> sorted_snp_gc.tsv
+    cp -f sorted_snp_gc.tsv $ASCAT_GC_FILE
 else
     echo "Skipped: $ASCAT_GC_DIR already exists."
 fi
