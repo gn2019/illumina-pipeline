@@ -760,7 +760,7 @@ process CAVEMAN_MSTEP {
     tag "${tumor_meta.id}_mstep_${idx}"
     container "${params.cgpwgs_sif}"
     cpus 1
-    memory '8 GB'
+    memory { 16.GB * task.attempt }
     maxForks 200
 
     input:
@@ -788,7 +788,7 @@ process CAVEMAN_MERGE {
     tag "${tumor_meta.id}_merge"
     container "${params.cgpwgs_sif}"
     cpus 1
-    memory '8 GB'
+    memory { 8.GB * task.attempt }
 
     input:
     tuple val(tumor_meta), val(outdir), val(cn_args)
@@ -815,7 +815,7 @@ process CAVEMAN_ESTEP {
     tag "${tumor_meta.id}_estep_${idx}"
     container "${params.cgpwgs_sif}"
     cpus 1
-    memory '8 GB'
+    memory { 16.GB * task.attempt }
     maxForks 200
 
     input:
@@ -843,7 +843,7 @@ process CAVEMAN_MERGE_RESULTS {
     tag "${tumor_meta.id}_merge_results"
     container "${params.cgpwgs_sif}"
     cpus 1
-    memory '8 GB'
+    memory { 8.GB * task.attempt }
 
     input:
     tuple val(tumor_meta), val(outdir), val(cn_args)
@@ -871,7 +871,7 @@ process CAVEMAN_ADD_IDS {
     container "${params.cgpwgs_sif}"
     publishDir "${params.results}/${tumor_meta.id}", pattern: 'caveman_done.flag', mode: 'copy'
     cpus 1
-    memory '8 GB'
+    memory { 8.GB * task.attempt }
 
     input:
     tuple val(tumor_meta), val(outdir), val(cn_args)
