@@ -51,7 +51,7 @@ fi
 # ==========================================
 ASCAT_GC_DIR="$REFS_DIR/CNV_SV_ref_GRCh38_hla_decoy_ebv_brass6+"
 ASCAT_GC_FILE="$ASCAT_GC_DIR/ascat/SnpGcCorrections.tsv"
-ASCAT_GC_URL="ftp://ftp.sanger.ac.uk/pub/cancer/dockstore/human/GRCh38_hla_decoy_ebv/CNV_SV_ref_GRCh38_hla_decoy_ebv_brass6+.tar.gz"
+ASCAT_GC_URL="http://ftp.sanger.ac.uk/pub/cancer/dockstore/human/GRCh38_hla_decoy_ebv/CNV_SV_ref_GRCh38_hla_decoy_ebv_brass6+.tar.gz"
 
 if [ ! -d "$ASCAT_GC_DIR" ]; then
     echo "Downloading ASCAT GC Correction file..."
