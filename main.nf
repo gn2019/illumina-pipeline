@@ -760,7 +760,7 @@ process CAVEMAN_MSTEP {
     tag "${tumor_meta.id}_mstep_${idx}"
     container "${params.cgpwgs_sif}"
     cpus 1
-    memory { 32.GB * task.attempt }
+    memory { 24.GB * task.attempt }
     maxForks 200
 
     input:
@@ -815,7 +815,7 @@ process CAVEMAN_ESTEP {
     tag "${tumor_meta.id}_estep_${idx}"
     container "${params.cgpwgs_sif}"
     cpus 1
-    memory { 32.GB * task.attempt }
+    memory { 24.GB * task.attempt }
     maxForks 200
 
     input:
